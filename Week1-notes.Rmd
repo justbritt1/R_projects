@@ -1,0 +1,407 @@
+---
+title: "Week 1 - Exploratory Data Analysis"
+date: '`r Sys.Date()`'
+output: html_notebook
+---
+
+## 2.1 What Is Statistics?
+
+-   Statistics is the process of discovering more about a topic by collecting information and subsequently analyzing that information.
+
+-   Statistics is concerned with methods for collecting, organizing, summarizing, analyzing, and presenting data.
+
+-   Data-laden information is present in virtually every sector of society, and the need to understand our surroundings is a basic human need.
+
+## 2.2 Data
+
+-   Data: information, organized for analysis or used as the basis for a decision.
+
+-   A characteristic that is being studied in a statistical problem is called a **variable**.
+
+-   A variable will be either **qualitative** or **quantitative**.
+
+-   When a variable is qualitative, it defines groups or categories. When the categories have no ordering the variable is called **nominal**.
+
+-   
+
+    -   For example, the variable *gender* can take on the values *male* and *female* or the variable music preference could have values such as *classical, jazz, rock*, or *other*.
+
+-   When the categories have a distinct ordering, the variable is called **ordinal**.
+
+-   
+
+    -   Such a variable might be educational level with values *elementary school, high school, college graduate, graduate*, or *professional school*.
+
+-   Values on a scale can be either **interval** or **ratio**.
+
+Interval data have interpretable distances, while ratio data have a true zero. \* A variable that is quantitative (numeric) may be either **discrete** or **continuous**.
+
+-   A discrete variable is a numerical variable that can assume a finite, or at most a countably infinite, number of values.
+
+-   E.g. the *number* of people arriving at a bank on Thursday
+
+-   A continuous variable is a numerical variable that can assume an infinite number of values associated with the numbers on an interval of the real number line
+
+-   for example, the *height* of a tree, the *life* of a light bulb, and the *weight* of an apple are all continuous random variables.
+
+------------------------------------------------------------------------
+
+### Levels of Measurement
+
+> -   
+>
+>     ![data_types](img/data_types.jpg)
+
+-   It is important to be able to distinguish between different types of variables because methods for viewing and summarizing data depend on variable type.
+
+-   The **distribution** of a variable specifies the values that the variable assumes and how often these values occur.
+
+-   For a discrete variable, the distribution is often presented as a table that provides distinct categories and how often they occur.
+
+-   For a continuous variable, the distribution is typically represented with a graph such as a histogram or a density plot.
+
+-   When a data set consists of a single variable, it is called a **univariate** data set.
+
+-   Data set with two variables, it is called a **bivariate** data set.
+
+-   When there are two or more variables, the data set is called a **multivariate** data set.
+
+## 2.3 Displaying Qualitative Data
+
+### 2.3.1 Tables
+
+A table that lists the different groups of categorical data and the corresponding frequencies with which they occur is called a **frequency table**. Qualitative information is typically presented in the form of a frequency table. The functions `table()` and `xtabs()` can be used to create various types of tables.
+
+```{r Grades, warning = FALSE, echo = TRUE}
+# Example 2.1
+Grades <- c("A","D","C","D","C","C","C","C","F","B")
+Grades
+
+```
+
+```{r Grades-page2, echo = TRUE}
+table(Grades) #creates the Grades distribution
+table(Grades)/length(Grades) # Relative frequency table. 
+table(Grades)/10 # compare with line above
+```
+
+Note: To learn about the R-command in command line type:
+
+`?command_name` E.g. `>?table`
+
+### 2.3.2 Barplots
+
+-   **Barplot** graphical method for summarizing categorical data. (bar charts or bar graphs)
+
+-   The R function `barplot()` is used to create barplots using a summarized version of the data, often the result of using either `table()` or `xtable()` on a data set. This summarized form of the data can be either frequencies or proportions. Since the argument `height=` for the `barchart()` function accepts either a vector or a matrix, which it subsequently displays, one will often use a function such as `table()` or `xtabs()` that summarizes the original data in the form of a vector or matrix. See `?barplot`
+
+#### Example 2.3
+
+The quine data frame in the `MASS` package has information on children from Walgett, New South Wales, Australia, who were classified by `Culture, Age, Sex`, and `Learner` status, as well as the number of `Days` absent from school in a particular school year.
+
+```{r Barplot, warning = FALSE, message = FALSE, echo = TRUE}
+
+library(MASS) #loads MASS package
+attach(quine) #makes the data available in the R search path 
+
+par(mfrow=c(2,2)) # change parameters, split the region into 4 smaller regions
+
+#Frequency distribution of Grades
+barplot(table(Grades),col=3,xlab="Grades",ylab="Frequency") 
+
+#Relative frequency distribution of Grades
+barplot(table(Grades)/length(Grades),col=3,xlab="Grades",ylab="Proportion") 
+
+#Frequency distribution of Age levels
+barplot(table(Age), col = 7, xlab = "Age", ylab = "Frequency") 
+
+#Relative frequency distribution of Age levels
+barplot(table(Age)/length(Age), col = 7, xlab = "Age", ylab = "Proportion")
+
+par(mfrow = c(1,1)) # resets the original parameters
+
+```
+
+### One more way
+
+```{r ggplot, warning = FALSE, message = FALSE, echo = TRUE}
+# Example 2.3
+library(ggplot2) #loads ggplot2 package
+
+# create ggplot object to display the Age groups in the quine data
+p1 <- ggplot(data = quine) + geom_bar(mapping = aes(Age)) #geom_bar() adds a layer of bars to the empty plot created by ggplot(). 
+
+# As a result, we get a barplot.
+print(p1)
+
+```
+
+-   Later we will review in details the `ggplot2` package and its graphing tools.
+
+### 2.3.3 Dot Charts
+
+A **dot chart** shows the values of the variables of interest (levels of the qualitative variable) as dots in a horizontal display over the range of the data. The function used to create a dot chart is `dotchart(data)`, where `data` is a vector containing frequencies for all the different levels of a variable. The function `dotchart()` requires summarized data. When working with unsummarized data, `table()` or `xtabs()` can be used to create summarized data that can be passed to the function `dotchart()`.
+
+```{r Dot chart, warning = FALSE, message = FALSE, echo = TRUE}
+# Example 2.4
+#loads MASS package
+library(MASS) 
+
+attach(quine)
+opar <- par(no.readonly = TRUE)  # read in current parameters
+par(mfrow=c(1, 2))
+dotchart(xtabs(~ Grades), main = "Grades", bg = "gray40",
+         xlim = c(0, 6))
+dotchart(xtabs(~ Age, data = quine), main = "Age", bg = "gray60",
+         xlim = c(25, 50))
+par(opar) # reset to original parameters
+detach(quine)
+
+```
+
+`ggplot2` solution using the `dplyr` package
+
+```{r ggplot solution, warnings = FALSE, message = FALSE, echo = TRUE}
+# Example 2.4 
+library(MASS) 
+
+#dplyr package for data manipulation is loaded
+library(dplyr) 
+
+# Group the quine data by Age and get Total Days Missed (TDM) by Age level
+quine2 <- quine %>% group_by(Age) %>% summarise(TDM = sum(Days))
+
+#print the quine2 data
+quine2
+
+# TDM_plot: Total Days Missed for each level of Age
+ggplot(data=quine2)+geom_point(mapping = aes (x = TDM,y = Age))
+
+# Group the quine data by Age and get Average Days Missed (ADM) by Age level
+quine3 <- quine %>% group_by(Age) %>% summarise(ADM = mean(Days))
+
+#print the quine3 data
+quine3
+
+# ADM_plot: Average Days Missed for each level of Age
+ggplot(data=quine3)+geom_point(mapping = aes (x = ADM, y = Age))
+```
+
+## Pie Charts
+
+**Pie charts** represent the relative frequencies or percentages of the levels of a categorical variable with wedges of a pie (circle). Pie charts are most useful when the emphasis is on each category in relation to the total.
+
+```{r pie chart, warning = FALSE, message = FALSE, echo = TRUE}
+# Example 2.6
+opar <- par(no.readonly = TRUE)          # read in current parameters
+par(mfrow = c(1, 2))                     # one row two columns   
+GS <- gray(c(0.1, 0.4, 0.7, 0.8, 0.95))  # different grays
+pie(xtabs( ~ Grades), radius = 1, col = GS)
+mtext("Grades", side = 3, cex = 1.25, line = 1)
+pie(xtabs(~ Age, data = quine), radius = 1, col = GS)
+mtext("Age", side = 3, cex = 1.25, line = 1)
+par(opar) # reset to original parameters 
+```
+
+-   Why do you think bar chart or a dot chart should be used instead of pie chart?
+
+### 2.4 Displaying Quantitative Data
+
+-   When presented with quantitative data, understanding begins with knowing about the data's shape, center, and spread. Some of the more common distribution shapes are shown below.
+
+-   
+
+    ![9 distribution shapes](img/9dist_shapes.jpg)
+
+### 2.4.1 Stem-and-Leaf Plots
+
+-   **stem-and-leaf plot** is useful for arranging the observations from smallest to largest so that specific positions within a data set can be located.
+
+-   When a stem-and-leaf plot is constructed, each observation is split into a stem and a leaf.
+
+-   The leaf in a stem-and-leaf plot is represented with a single digit.
+
+-   Use stem-and-leaf plots to illustrate smallish data sets (less than `100` values).
+
+-   The R command to create a stem-and-leaf plot is `stem(x)`, where `x` is a numeric vector.
+
+#### Example 2.7
+
+Use the data frame `BABERUTH` (in the package `PASWR2`) to construct a stem-and-leaf plot for the number of home runs (`hr`) Babe Ruth hit while he played for the New York Yankees.
+
+```{r stem-and-leaf, warning = FALSE, message = FALSE, echo = TRUE, fig.height=3}
+# Example 2.7
+library(PASWR2) #loads PASWR2 package
+
+library(dplyr)
+
+# Extract the data for team value - "NY-A" for the variable hr 
+NYYHR <- BABERUTH$hr[BABERUTH$team=="NY-A"]
+NYYHR
+
+#Compare with
+NYYHR2 <- BABERUTH %>% filter(team == "NY-A") %>% pull(hr) #Using the pull (dplyr package) and piping operator %>%
+NYYHR2
+
+stem(NYYHR)
+rm(NYYHR) # clean up
+
+
+```
+
+------------------------------------------------------------------------
+
+### 2.4.2 Strip Charts
+
+-   An alternative to the stem-and-leaf plot is a **strip chart** (AKA `dotplot`).
+
+-   The R function `stripchart()` will stack the tied observations in a column at each value observed along a line that covers the range of the data when given the argument `method = “stack”`.
+
+-   The function requires the data to be a *vector* type, a list of vectors, or a formula of the form `x ~ g`, where values are in a vector `x` and groups are in a vector `g`.
+
+-   Strip charts are often useful for comparing the distribution of a quantitative variable at different qualitative levels (groups).
+
+------------------------------------------------------------------------
+
+#### **Example 2.8**
+
+Use the data frame BABERUTH to
+
+(a) Construct a strip chart of the number of home runs Babe Ruth hit each season while playing for the New York Yankees.
+
+(b) Create a strip chart of the number of home runs Babe Ruth hit per season according to the team for which he was playing. Based on the strip chart, when Babe Ruth played, for which team did he generally hit more home runs per season?
+
+```{r stripchart BABERUTH, warning = FALSE, message = FALSE, echo = TRUE, fig.height=3}
+# Example 2.8 part 1
+head(BABERUTH) # list the first 6 obs in the data
+
+NYYHR <- with(data=BABERUTH, hr[team=="NY-A"]) # home runs (hr) data for team value - "NY-A" 
+
+stripchart(NYYHR, xlab="Home runs per season", method="stack",
+           main="Strip chart of home runs while a New York Yankee", pch=1)
+rm(NYYHR) # clean up
+```
+
+```{r stripchart BABERUTH2, warning = FALSE, message = FALSE, echo = TRUE, fig.height=3.5}
+# Example 2.8 part 2
+opar <- par(no.readonly = TRUE)      # read in current parameters
+par(mfrow = c(1, 2)) #change parameters, split the region into 2 smaller regions
+stripchart(hr ~ team, data = BABERUTH, xlab = "Home runs per season",
+           pch = 1, method = "stack")
+title("Strip chart of home runs \n by team")
+par(las = 1)                        # Makes labels horizontal
+stripchart(hr ~ team, data = BABERUTH, pch = 19, method = "stack",
+           col = c("gray30","gray50","gray70"), xlab = "Home runs per season",
+           main = "Grayscale strip chart of \n home runs by team")
+par(opar) # reset to original parameters
+```
+
+### 2.4.3 Density Curves for Exploring Univariate Data
+
+-   The shape of a set of values is important (crucial for determining the best statistical procedure)
+
+-   Density curve: a way to estimate the overall shape of a set of values.
+
+-   A density curve is a function drawn in such a way as to have an area of `1` between the function and the `x-axis`.
+
+-   Generally only the data at hand is available. No additional knowledge about the target distribution. In such cases, the density curve is often approximated using only the data.
+
+-   Histogram is well known density estimator
+
+#### 2.4.3.1 Histograms
+
+-   The **histogram** is a graph that illustrates the distribution of quantitative (numerical) data. It is an estimate of the probability distribution of a continuous variable and was first introduced by Karl Pearson.
+
+-   Histogram is used for numerical data (compare to barplot)
+
+-   Histograms created in R with the function `hist(x)`, where `x` is a numeric vector, are, by default, *frequency* histograms.
+
+-   To create density histograms, use the optional argument `freq = FALSE`. A density histogram has a total area of one. For class intervals of equal width `h`, the histogram density estimate based on a sample of size `n` is written
+
+-   $f(x) = \frac{v_k}{nh}, t_k<x \leq t_{k+1}$
+
+-   where $v_k$ is the number of sample points in the class interval $(t_k, t_{k + 1}]$. Sometimes the class interval is defined to be $[t_k, t_{k + 1})$, closed on the left.
+
+-   Intervals on the left and closed intervals on the right match the defaults `R` uses when creating histograms.
+
+-   `hist()` function uses the argument `include.lowest = TRUE` so that the minimum value of a data set is included in the first class interval.
+
+```{r histogram, warning = FALSE, message = FALSE, echo = TRUE, fig.height=3}
+# Example 2.9
+opar <- par(no.readonly = TRUE)  # read in current parameters
+par(mfrow=c(1, 3))               # one row two columns
+bin <- seq(20, 70, 10)           # creating bins 20-70 by 10
+NYYHR2 <- BABERUTH %>% filter(team == "NY-A") %>% pull(hr) #Using the pull (dplyr package) and piping
+
+# compare NYYHR2 with BABERUTH$hr[7:21] (we did it in  Example 2.7)
+
+hist(NYYHR2, breaks = bin, xlab = "Home Runs", col = "pink",
+     main = "Bins of form (]") # FREQUENCY HISTOGRAM 
+
+hist(NYYHR2, breaks = bin, right = FALSE, xlab = "Home Runs",
+     col = "pink", main = "Bins of form [)") # FREQUENCY HISTOGRAM 
+
+hist(NYYHR2, freq = FALSE, breaks = bin, right = FALSE, xlab = "Home Runs",
+     col = "pink", main = "Bins of form [)") # DENSITY HISTOGRAM (total area 1)
+
+par(opar) # reset to original parameters
+```
+
+### How many class intervals to choose? What bin width?
+
+-   Shape of the data depends on the bin width for the histogram.
+
+-   User needs to provide either a vector of breakpoints, a function to compute the breakpoints, a single number specifying the number of breakpoints, or a character string naming the algorithm to compute the number of class intervals to the argument `breaks=`.
+
+-   `R` will use the default argument `breaks = “Sturges”`
+
+-   $$h_{Sturges} = \frac{R}{1+log_2 n}$$ where $R$ is the range for the data ($R=max - min$).
+
+-   Using “Sturges” for class interval width of multimodal or skewed data will not be a good estimate of the true underlying density function
+
+-   other option for `breaks=` are `“FD”` / `“Freedman-Diaconis”`, and `“Scott”`.
+
+#### 2.4.3.2 Kernel Density Estimators (smoothing the shape of the distribution)
+
+-   **kernel density estimator** estimates shape of a distribution.
+
+-   The R function `density(x)`, where `x` is a numeric vector.
+
+-   `density()` accepts 7 definitions for the `kernel=` argument: `guassian, epanechnikov, rectangular, triangular, biweight, cosine, and optcosine`. (use `gaussian` default)
+
+-   uses shapes with `1/n` area added up at each point in the data set to create a graph with area `1`.
+
+-   The result of the kernel density estimate can be viewed with either the `plot()` or `lines()` function. (`plot()` is a high-level function while `lines()` is a low-level function)
+
+-   `plot()` will create a graph while `lines()` will add to an existing graph.
+
+#### Example
+
+Use the data frame BABERUTH to construct histograms for the number of **home runs** Babe Ruth hit while a New York Yankee, construct a density histogram of the home runs. Superimpose a Gaussian kernel density estimate over the density histogram.
+
+```{r density estimator, warning = FALSE, message = FALSE, echo = TRUE, fig.height=3}
+
+opar <- par(no.readonly = TRUE)  # read in current parameters
+par(mfrow=c(1, 2))               # make device region 1 by 2
+
+NYYHR2 <- BABERUTH %>% filter(team == "NY-A") %>% pull(hr) #Using the pull (dplyr package) and piping
+# compare NYYHR2 with BABERUTH$hr[7:21] (we did it in  Example 2.7)
+
+# density histogram
+hist(NYYHR2, freq = FALSE, col="grey60", main = "Density Histogram of Home Runs (NY-Y)")  
+
+# superimpose kernel density estimate over histogram
+lines(density(NYYHR2), col="red", lwd=2)
+    
+# create kernel density estimate by itself 
+plot(density(NYYHR2), col="red", lwd=2, main="Density Histogram of Home Runs (NY-Y)")
+    
+par(opar) # reset to original parameters
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
