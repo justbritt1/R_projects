@@ -1,0 +1,158 @@
+---
+title: "Geospatial Data Example - Crime Data City of Chicago - 2017"
+author: "Valentin Milanov"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## What is (Geo)spatial data?
+
+> Data is associated with locations
+
+> Location described by coordinates + a coordinate reference system (CRS)
+
+> Common CRS: longitude, latitude describes locations on the surface of the Earth
+
+## Geospatial data are widespread in scientific fields such as history, biology, business, public health, tech, sociology, psychology, and etc.
+
+Important considerations for using geospatial data include defining:
+
+> Topic (e.g., frequency of flu cases in pennsylvania by county)
+
+> Unit of analysis (e.g., individuals, families, households, institutions, products)
+
+> Geographic unit (e.g., cities, counties, states, countries, continents)
+
+> Time unit (e.g., minutes, seconds, hours, days, months, years, decades)
+
+## Load Packages and Set Working Directory
+
+Install the following packages installed (if not already installed), and then load all packages:
+
+```{r packages, warning = FALSE, message = FALSE}
+
+# install the packages below if not installed yet
+library(tidyverse)
+library(leaflet)
+library(stringr)
+library(sf) 
+library(here)
+library(widgetframe)
+
+options(digits = 3)
+set.seed(61019)
+theme_set(theme_minimal())
+```
+
+## Reading in Geospatial Data
+
+### Crime Data from the City of Chicago in 2017
+
+This dataset reflects reported incidents of crime (with the exception of murders where data exists for each victim) that occurred in the City of Chicago from 2001 to present, minus the most recent seven days. Data is extracted from the Chicago Police Department's CLEAR (Citizen Law Enforcement Analysis and Reporting) system. In order to protect the privacy of crime victims, addresses are shown at the block level only and specific locations are not identified. Should you have questions about this dataset, you may contact the Research & Development Division of the Chicago Police Department at 312.745.6071 or [RandD\@chicagopolice.org](mailto:RandD@chicagopolice.org){.email}.
+
+Link to the data: [<https://data.cityofchicago.org/Public-Safety/Crimes-2017/d62x-nvdr>]
+
+### A bit of data preparation
+
+**Note:** I have placed my data file in a subfolder in the working directory called `data`. Adjust the path in the read.csv()\` function when you read your data file that is provided in the project item.
+
+You can also read it directly from the https location, code commented in the chunk below but it is not practical to knit your document and read the file from the web every time!
+
+```{r prepare data}
+# create data.frame reading the data from the web with read.csv() function, user HEADER=true as columns carry the name of the variables
+crimes <- read.csv("C:\\Users\\bsmith115\\Downloads\\Crimes-2017.csv", header = TRUE) 
+dim(crimes)
+
+ 
+# Uncomment the line below if you want to read the file from the web - THIS would SLOW down the knitting of the notebook if done every itme
+
+# crimes2<- read.csv("https://data.cityofchicago.org/api/views/d62x-nvdr/rows.csv?accessType=DOWNLOAD", header = TRUE)
+
+# have a look at the data
+glimpse(crimes)
+```
+
+\*\*a) Let us describe the data, how many observations on how many variables. Can you see variables that carry the geographic pieces of information, longitude and latitude?
+
+YOUR DESCRIPTION HERE:
+There are 30 columns/ observations. Ones that contains geographic info are Block, Location, district, ward, community.area, X and Y coordinates, latitude, longitude, location, historical.wards.2003.2015, zip.codes, community.areas, census.tracts, wards, boundaries, police.districts, police.beats. Ones with latitude and longitude are X and Y coordinates, Latitude and Longitude, and Location.
+
+```{r}
+homicides <- crimes %>% filter(`Primary.Type` == "HOMICIDE")
+
+dim(homicides)
+```
+
+We see the data has `676` homicides reports.
+
+### Using Chicago crimes data to draw a map of the city identifying the location of each reported homicide.
+
+```{r}
+
+leaflet(data = homicides) %>%
+  addTiles() %>%
+  addMarkers()
+```
+
+Try ZOOM in/out on the map.
+
+We can see that some neighborhoods have so many murders that the points overlap. `Leaflet`’s interactivity allow us to cluster markers at varying levels of detail using the `clusterOptions` argument to `addMarkers()`:
+
+```{r}
+leaflet(data = homicides) %>%
+  addTiles() %>%
+  addMarkers(clusterOptions = markerClusterOptions())
+```
+
+By looking at the clusters, where do you see more homicide crimes north or south?
+
+North
+
+We can make some information to appear when we click on the point using the `popup=` option, e.g. `popup = ~Date`:
+
+```{r}
+leaflet(data = homicides) %>%
+  addTiles() %>%
+  addMarkers(popup = ~Date)
+```
+
+**Exercise:** Select data for one of the following type of crimes `ARSON`, `KIDNAPPING` or `SEX OFFENSE`. Create map that incorporates cluster markers using the `clusterOptions` argument to `addMarkers()`.
+
+**Hint:** Use `summary(crimes$Primary.Type)` to see the type of crimes. The variable is `Primary Type` of the crime. (code is commented below, uncomment to use)
+
+```{r}
+# summary(crimes$Primary.Type)
+
+KIDNAPPING <- crimes %>% filter(`Primary.Type` == "KIDNAPPING")
+
+dim(KIDNAPPING)
+```
+
+**Q:** How many crimes of the selected type?
+
+**A:** For Kidnapping, there are 190 cases. 
+
+Using the `popup=` option add the `Zip.Codes` value to appear on click on a marker.
+
+**Hint:** We can y=use `popup = ~as.charecter(Zip.Codes)`.
+
+```{r}
+leaflet(data = KIDNAPPING) %>%
+  addTiles() %>%
+  addMarkers(clusterOptions = markerClusterOptions(), popup = ~ as.character(Zip.Codes))
+```
+
+**Q:** From the map and the selected type of crime, can you state which part of the city is safe in a sense less crimes of this type occur?
+
+**A:** Looking at the map, it seems once you start getting away from the city there are no kidnappings recorded. The area of "Skokie" has no kidnapping reports.
+
+## More on making Maps with R
+
+R uses simple mechanism, via the `maps` package, for making simple outlines of maps and plotting *lat-long* points and paths on them.
+
+Here is really good tutorial if you want to practice more maps: [Maps with R](http://eriqande.github.io/rep-res-web/lectures/making-maps-with-R.html#map-making-in-R)
