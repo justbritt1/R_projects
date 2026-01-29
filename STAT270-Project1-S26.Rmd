@@ -1,0 +1,429 @@
+---
+title: "STAT270 - Project 1"
+author: "YOUR NAME HERE"
+date: '`r Sys.Date()`'
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Directions: Complete two (2) out of the 3 Tasks listed in the project.
+
+> 1.  Complete either Task 1 **or** Task 2
+
+> 2.  Complete Task 3
+
+**Note:** If you `Rmd` file submission knits you will receive total of **(5 points)**
+
+**Run the code** in the chunk below to load the needed R-packages!
+
+```{r packages, echo=TRUE, message = FALSE, warning = FALSE}
+# load the packages needed
+library(PASWR2)
+library(ggplot2)
+library(tidyverse)
+library(lattice) 
+```
+
+#### **1. (5 points)** How many packages were loaded in the chunk above?
+
+**ANSWER**: 4, including PASWR2, ggplot2, tidyverse, lattice
+
+## Task 1: **This is problem 8 on page 196 in the text** w/t added questions
+
+**Note:** **Problem 8/p. 196 is modified**
+
+Some claim that the final hours aboard the Titanic were marked by class warfare other claim it was characterized by male chivalry. The data frame `TITANIC3` from the `PASWR2` package contains information pertaining to class status `pclass`, survival of passengers `survived`, and gender `sex`, among others. Based on the information in the data frame:
+
+### Load and Access the Data from the package
+
+A description of the variables can be found by running the code:
+
+```{r data description}
+help("TITANIC3")
+data("TITANIC3")
+```
+
+#### **2. (5 points)** How many observations and variables are in the `TITANIC3` data?
+
+**Hint:** Use the function `dim()`, `glimpse()` or `str()`.
+
+```{r dimentions}
+
+dim(TITANIC3)
+
+```
+
+**ANSWER :** There are 1309 rows and 14 columns in `TITANIC3`. (**Fill in the blanks**)
+
+#### **3. (5 points)** **Write c**ode **to show the first or last 6 observation in the `TITANIC3` data?**
+
+```{r}
+tail(TITANIC3)
+
+```
+
+#### **4. (5 points)** **Using the `survived` variable in the `TITANIC3` data, which is of type integer `(0/1),` mutate it to a factor variable by running the code below and create new data frame `TITANIC`.**
+
+**What are the new levels of `survived` and its type?**
+
+```{r}
+TITANIC <- TITANIC3 %>% mutate(survived = factor(survived, levels = 0:1, labels = c("No", "Yes")))
+
+# Check the levels of the 'survived' variable
+levels(TITANIC$survived)
+
+# Check the type of the 'survived' variable
+class(TITANIC$survived)
+```
+
+**ANSWER:** Levels are No and Yes. Type: factor. 
+
+#### **5. (5 points)** The code below produces summary for the `TITANIC` Data. **Write code using the** *pipe* **%\>% operator the produces the same result.**
+
+```{r}
+summary(TITANIC)
+
+```
+
+YOUR CODE HERE:
+
+```{r}
+# with pipe
+TITANIC %>% summary()
+
+```
+
+#### **a) (5 points)** Determine the fraction of survivors (`survived`) according to class (`pclass`) by running the code.
+
+**Hint:** Uncomment the 3 lines in the code chunk below and then use the `prop.table` function.
+
+```{r part-a}
+
+T1 <- TITANIC %>% select(survived, pclass) %>% table
+
+T1
+
+prop.table(T1, margin = 2) # to produce the proportion per column (2), per row would be margin = 1
+```
+
+**ANSWER (Fill in the blank spaces):** In 1st class percent survived is .619 , 2nd class .430 , 3rd class .255
+
+#### **b) (10 points)** Compute the proportion of survivors by **class** and **gender**. Among those who survived, determine which group has the higher fraction: **men in first class** or **women in third class**.
+
+**Hint:** Use the code below that creates 3-way table and then use `prop.table()` similarly to part a).
+
+```{r part-b}
+
+TITANIC <- TITANIC3 %>% 
+  mutate(survived = factor(survived, 
+                          levels = 0:1, 
+                          labels = c("No", "Yes")))
+
+# Create 3-way table
+three_way_table <- table(TITANIC$survived, TITANIC$pclass, TITANIC$sex)
+
+# Check the structure and dimension names
+dimnames(three_way_table)
+dim(three_way_table)
+
+# Use prop.table with margin c(2,3) - proportions within class-sex groups
+survival_props <- prop.table(three_way_table, margin = c(2, 3))
+
+# View the table
+survival_props
+
+
+```
+
+**ANSWER (Fill in the blank spaces):** Of those who survived .4907  were **women in third class** and .3408 were **men in first class**.
+
+#### **c) (10 points)** Examine the distribution of passenger `age`. Characterize it as symmetric, skewed (positively/negatively), unimodal, or multimodal.
+
+Run the code below that produces some summary statistics and the density distribution.
+
+The commented code is old style of R programming, it is shown as it may resemble the textbook examples.
+
+```{r part-c}
+# Finding summary statistics
+
+#median(TITANIC$age, na.rm = TRUE) # old style 
+#mean(TITANIC$age, na.rm = TRUE) # old style
+
+# dplyr style
+TITANIC %>% summarise(mean = mean(age, na.rm = TRUE), meadian = median(age, na.rm = TRUE))
+
+# IQR(TITANIC$age, na.rm = TRUE) 
+
+TITANIC %>% pull(age) %>% IQR(na.rm = TRUE) # pull() does extract the column from the data frame as vector object
+
+# look at the density function to see if it is uni or bi-modal distribution
+ggplot(data = TITANIC, aes(x = age)) +
+geom_density(fill = "lightgreen") +
+theme_bw()
+
+```
+
+**ANSWER:** Positive skew and bimodal
+
+#### **d) (5 points)** Compare the mean and median ages of females who survived versus females who did not survive. Also, report an appropriate measure of spread (e.g., standard deviation or IQR).
+
+**Report the median and mean ages as well as an appropriate measure of spread for each statistic.**
+
+**Hint:** Using the `dplyr` package functions and the pipes operator `%>%` elegant code can produce summaries for each statistics - mean, median, sd, IRQ.
+
+##### Without considering the `pclass` variable, namely regardless of passenger class:
+
+##### Mean Summaries
+
+```{r}
+# mean summaries
+TITANIC %>% group_by(sex, survived) %>% summarise(avg = mean(age, na.rm = TRUE))
+
+```
+
+##### Standard deviation Summaries
+
+```{r}
+# sd summaries
+TITANIC %>% group_by(sex, survived) %>% summarise(stdev = sd(age, na.rm = TRUE))
+
+```
+
+##### Median Summaries
+
+```{r}
+# median summaries
+TITANIC %>% group_by(sex, survived) %>% summarise(med = median(age, na.rm = TRUE))
+
+```
+
+##### IQR Summaries
+
+```{r}
+# IQR summaries
+TITANIC %>% group_by(sex, survived) %>% summarise(IQR = IQR(age, na.rm = TRUE))
+
+```
+
+Based on the produced summaries, answer the questions below by choosing HIGHER or LOWER as based on the data:
+
+**d-1)** For those who survived, the **mean** age for females is HIGHER/LOWER than the mean age for males?
+HIGHER
+
+**d-2)** For those who survived, the **standard deviation** of age for females is HIGHER/LOWER than the median age for males?
+HIGHER
+
+**d-3)** For those who survived, the **median** age for females is HIGHER/LOWER than the mean age for males?
+HIGHER
+
+**d-4)** For those who survived, the **IQR** of age for females is HIGHER/LOWER than the median age for males?
+HIGHER
+
+#### **6. (10 points)** Now Consider the `survived` variable in the `TITANIC` data to create similar summary statistics and answer the question below.
+
+For those who survived, **for which class** the mean age for females is **less** than the mean age for males?
+3RD CLASS
+
+For those who survived, **for which class** the median age for females is **greater** than the median age for males?
+2ND CLASS
+
+Write your code in the chunk below:
+
+```{r}
+# mean summaries
+TITANIC %>% group_by(pclass, sex, survived) %>% summarise(avg = mean(age, na.rm = TRUE))
+
+
+
+# median summaries
+
+TITANIC %>% group_by(pclass, sex, survived) %>% summarise(med = median(age, na.rm = TRUE))
+
+# write your code here\
+# Question 1: Mean age - which class has female < male (for survivors)?
+TITANIC %>% 
+  filter(survived == "Yes") %>%
+  group_by(pclass, sex) %>% 
+  summarise(avg = mean(age, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = sex, values_from = avg)
+
+# Question 2: Median age - which class has female > male (for survivors)?
+TITANIC %>% 
+  filter(survived == "Yes") %>%
+  group_by(pclass, sex) %>% 
+  summarise(med = median(age, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = sex, values_from = med)
+```
+
+#### **e) (5 points)** Were the median and mean ages for males who survived higher or lower than for males who did not survive? Report the median and mean ages as well as an appropriate measure of spread for each statistic.
+
+**Hint:** Read the output of the code in part d)
+
+**ANSWER:** \_ \_ \_
+
+#### **f) (5 points)** What was the age of the youngest female in the first class who survived?
+
+**Hint:** Uncomment and complete the code below by specifying which variable to be used for the data to be arranged.
+
+```{r}
+#TITANIC %>% filter (sex =="female" & survived =="Yes" & pclass == "1st") %>% arrange(_ _ _)
+```
+
+Arranging in descending order is achieved by specifying in the `arrange()` function `desc(var_name)`.
+
+#### **7. (5 points)** What was the age of the oldest female (male) in the first class who survived?
+
+YOUR CODE HERE:
+
+```{r}
+# for female
+TITANIC %>% filter(sex =="female" & survived =="Yes" & pclass == "1st") %>% arrange(desc(age))
+
+
+```
+
+**ANSWER:**
+
+Oldest **female** in 1st class survived was \_ \_ \_ years of age.
+
+Oldest **male** in 1st class survived was \_ \_ \_ years of age.
+
+#### **g) (10 points)** Do the data suggest that the final hours aboard the Titanic were characterized by class warfare, male chivalry, some combination of both, or neither? Justify your answer based on computations above, or based on other explorations of the data.
+
+**Hint:** Review and explain the exploratory graphs created by the code chunk. How they support you justification?
+
+```{r part extra}
+
+TITANIC %>%  ggplot(aes(x = survived)) +
+  geom_bar(aes(fill = sex), stat = "count", position = "stack" ) +
+  theme_bw()
+
+TITANIC %>%  ggplot(aes(x = survived)) +
+  geom_bar(aes(fill = pclass), stat = "count", position = "stack" ) +
+  theme_bw()
+
+```
+
+## Task 2: **This is problem 9 on page 197 in the text** as is.
+
+**Note:** This is **not guided** task, you have to write your own code from scratch!
+
+Use the CARS2004 data frame from the `PASWR2` package, which contains the numbers of cars per `1000` inhabitants (`cars`), the total number of known mortal accidents (`deaths`), and the country population/1000 (`population`) for the 25 member countries of the European Union for the year 2004.
+
+#### **a) (10 points)** Compute the total number of cars per 1000 inhabitants in each country, and store the result in an object named `total.cars`. Determine the total number of known automobile fatalities in 2004 divided by the total number of cars for each country and store the result in an object named `death.rate`.
+
+YOUR CODE:
+
+```{r}
+library()
+```
+
+**ANSWER:**
+
+#### **b) (10 points)** Create a barplot showing the automobile death rate for each of the European Union member countries. Make the bars increase in magnitude so that the countries with the smallest automobile death rates appear first.
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+#### **c) (10 points)** Which country has the lowest automobile death rate? Which country has the highest automobile death rate?
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+#### **d) (10 points)** Create scatter plot of `population` versus `total.cars`. How would characterize the relationship?
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+#### **e) (10 points)** Find the least squares estimates for regressing population on `total.cars`. Superimpose the least squares line on the scatterplot from (d). What population does the least squares model predict for a country with a `total.cars` value of 19224.630? Find the difference between the population predicted from the least squares model and the actual population for the country with a `total.cars` value of 19224.630.
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+#### **f) (10 points)** Create a scatterplot of `total.cars` versus `death.rate`. How would you characterize the relationship between the two variables?
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+#### **g) (10 points)** Compute Spearman's rank correlation coefficient of `total.cars` and `death.rate`. (Hint: Use `cor(x, y, method=“spearman”)`.) What is this coefficient measuring?
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+#### **h) (10 points)** Plot the logarithm of `total.cars` versus the logarithm of `death.rate`. How would you characterize the relationship?
+
+YOUR CODE:
+
+```{r}
+
+```
+
+**ANSWER:**
+
+## Task 3 **(10 points)** Run the code below to create a map with leaflet package that displays 5 UNC system schools using their geographic locations. Draw circles with radius proportionate to the school size using the `addCircles()` function.
+
+**Try:** E.g. `addCircles(weight = 1, radius = sqrt(UNC_schools$size)*100)`
+
+```{r}
+
+set.seed(123)
+
+library(leaflet)
+
+# The code below will create list of 5 UNC university data points with lat & lng, name and school size
+# Create data frame with column variables name (of UNC school), students (size), lat, lng)
+UNC_schools <- data.frame(name = c("NC State", "UNC Chapel Hill", "FSU", "ECU", "UNC Charlotte"),
+                        size = c(30130, 28136, 6000, 25990, 25990),
+                        lat = c(36.0373638, 35.9050353, 35.0726, 35.6073769, 35.2036325),
+                        lng = c(-79.0355663, -79.0477533, -78.8924739, -77.3671566, -80.8401145))
+
+
+# Use the data frame to draw map and circles proportional to the school sizes of the cities
+UNC_schools %>%
+  leaflet() %>%
+  addTiles() %>%
+  addCircles(weight = 1, radius = sqrt(UNC_schools$size)*100) # try adjusting the radius by multiplying with 50 instead of 100. What do you notice?
+
+```
+
+## Task 3 (Extra Credit, 5 pts): Add at least two more UNC schools, using their location data and enrollment numbers. Modify the code above and update the map for all schools included.
+
+```{r echo=FALSE}
+## DO NOT CHANGE ANYTHING IN THIS CODE CHUNK!
+date()
+sessionInfo()
+R.Version()
+```
