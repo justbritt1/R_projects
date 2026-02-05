@@ -262,19 +262,21 @@ TITANIC %>%
 
 **Hint:** Read the output of the code in part d)
 
-**ANSWER:** \_ \_ \_
+**ANSWER:** The males that did not survive ages where higher then males ages that survived. Median male age survived, 1st - 36, 2nd - 19, 3rd - 25. Mean ages of males not survived, 1st - 36.17, 2nd - 17.45, 3rd - 22.44. Mean pairs with Standard Deviation (SD) - both are affected by outliers. Median pairs with Interquartile Range (IQR) - both are resistant to outliers
 
-#### **f) (5 points)** What was the age of the youngest female in the first class who survived?
+#### **f) (5 points)** What was the age of the youngest female in the first class who survived? 
+Miss. Lucile Polk Carter age 14.
 
 **Hint:** Uncomment and complete the code below by specifying which variable to be used for the data to be arranged.
 
 ```{r}
-#TITANIC %>% filter (sex =="female" & survived =="Yes" & pclass == "1st") %>% arrange(_ _ _)
+TITANIC %>% filter (sex =="male" & survived =="Yes" & pclass == "1st") %>% arrange(age)
 ```
 
 Arranging in descending order is achieved by specifying in the `arrange()` function `desc(var_name)`.
 
-#### **7. (5 points)** What was the age of the oldest female (male) in the first class who survived?
+#### **7. (5 points)** What was the age of the oldest female (male) in the first class who survived? 
+76 - Female, 80 - Male
 
 YOUR CODE HERE:
 
@@ -287,11 +289,12 @@ TITANIC %>% filter(sex =="female" & survived =="Yes" & pclass == "1st") %>% arra
 
 **ANSWER:**
 
-Oldest **female** in 1st class survived was \_ \_ \_ years of age.
+Oldest **female** in 1st class survived was 76 years of age.
 
-Oldest **male** in 1st class survived was \_ \_ \_ years of age.
+Oldest **male** in 1st class survived was 80 years of age.
 
 #### **g) (10 points)** Do the data suggest that the final hours aboard the Titanic were characterized by class warfare, male chivalry, some combination of both, or neither? Justify your answer based on computations above, or based on other explorations of the data.
+The data suggest that the final hours aboard the Titanic were characterized by a combination of BOTH male chivalry and class warfare.
 
 **Hint:** Review and explain the exploratory graphs created by the code chunk. How they support you justification?
 
@@ -318,20 +321,93 @@ Use the CARS2004 data frame from the `PASWR2` package, which contains the number
 YOUR CODE:
 
 ```{r}
-library()
+library(PASWR2)
+
+# load the CARS2004 data
+data("CARS2004")
+
+# Compute total number of cars per 1000 inhabitants
+# total.cars is simply the cars column
+total.cars <- CARS2004$cars
+
+# Display the result
+print("Total cars per 1000 inhabitants by country:")
+print(total.cars)
+
+# named vector with country names:
+names(total.cars) <- CARS2004$country
+print(total.cars)
+
+# Compute death rate (deaths per car)
+# death.rate = total deaths / total number of cars
+# 
+# We have:
+# - deaths: total known mortal accidents
+# - cars: cars per 1000 inhabitants
+# - population: country population / 1000
+# Calculate total number of cars in each country
+total_cars_in_country <- CARS2004$cars * CARS2004$population
+
+# Calculate death rate (deaths per car)
+death.rate <- CARS2004$deaths / total_cars_in_country
+
+# Display the result
+print("\nDeath rate (deaths per car) by country:")
+print(death.rate)
+
+# Add country names for clarity
+names(death.rate) <- CARS2004$country
+print(death.rate)
+
 ```
 
 **ANSWER:**
+Total number of cars per 1000 inhabitants:
+[1] 467 373 354 546 350 348 454 491 385 581 448 297 384 659 280 525
+[17] 429 501 314 572 456 222 448 456 463.
+Death Rate:
+ Belgium Czech Republic        Denmark        Germany 
+  2.306932e-05   3.544167e-05   3.558548e-05   1.575590e-06 
+       Estonia         Greece          Spain         France 
+  2.664693e-04   3.825865e-05   5.825860e-06   3.128040e-06 
+       Ireland          Italy         Cyprus         Latvia 
+  6.061466e-05   2.884078e-06   4.892368e-04   3.223263e-04 
+     Lithuania     Luxembourg        Hungary          Malta 
+  1.647441e-04   3.659339e-04   4.518561e-05   1.571429e-04 
+   Netherlands        Austria         Poland       Portugal 
+  7.025410e-06   2.656752e-05   1.250837e-05   2.069530e-05 
+      Slovenia       Slovakia        Finland         Sweden 
+  1.505203e-04   9.377407e-05   3.078818e-05   1.294876e-05 
+United Kingdom 
+  2.027599e-06 
+
+
 
 #### **b) (10 points)** Create a barplot showing the automobile death rate for each of the European Union member countries. Make the bars increase in magnitude so that the countries with the smallest automobile death rates appear first.
 
 YOUR CODE:
 
 ```{r}
+# Sort death.rate in ascending order (smallest to largest)
+death.rate_sorted <- sort(death.rate, decreasing = FALSE)
 
+# Create barplot with increasing magnitude
+barplot(death.rate_sorted,
+        main = "Automobile Death Rate by EU Country (2004)",
+        ylab = "Death Rate (Deaths per Car)",
+        xlab = "Country",
+        las = 2,  # Rotate x-axis labels vertically
+        col = "darkred",
+        cex.names = 0.7,  # Make country names smaller to fit
+        border = "black")
+
+# Added a horizontal line for the mean death rate
+abline(h = mean(death.rate), col = "blue", lwd = 2, lty = 2)
+legend("topleft", legend = "Mean Death Rate", col = "blue", lty = 2, lwd = 2)
 ```
 
 **ANSWER:**
+Country with highest is Cyprus, and country with lowest is Germany.
 
 #### **c) (10 points)** Which country has the lowest automobile death rate? Which country has the highest automobile death rate?
 
@@ -348,7 +424,39 @@ YOUR CODE:
 YOUR CODE:
 
 ```{r}
+# Extract population
+population <- CARS2004$population
 
+# Create scatter plot
+plot(population, total.cars,
+     main = "Population vs. Cars per 1000 Inhabitants\nEU Countries (2004)",
+     xlab = "Population (in thousands)",
+     ylab = "Cars per 1000 Inhabitants",
+     pch = 19,  # Solid circles
+     col = "steelblue",
+     cex = 1.5)
+
+# Add country labels to points
+text(population, total.cars, 
+     labels = CARS2004$country, 
+     pos = 3,  # Position labels above points
+     cex = 0.6,
+     col = "darkgreen")
+
+# Add a grid for easier reading
+grid()
+
+# Calculate and display correlation
+correlation <- cor(population, total.cars)
+cat("Correlation coefficient:", round(correlation, 4), "\n")
+
+# Add correlation text to plot
+text(x = max(population) * 0.8, 
+     y = max(total.cars) * 0.95,
+     labels = paste("r =", round(correlation, 3)),
+     cex = 1.2,
+     col = "darkblue",
+     font = 2)
 ```
 
 **ANSWER:**
