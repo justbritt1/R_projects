@@ -1,0 +1,362 @@
+---
+title: Week 6 - Sampling Distributions 
+author: "Valentin Milanov"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r packages, echo = FALSE, message = FALSE}
+library(ggplot2)
+library(PASWR2)
+library(boot)
+
+```
+
+### Simple random sampling 
+
+
+**Example 6.3** A teacher wants an algorithm that will randomly select 5 students from a large lecture section of 180 students to present their work at the board.
+
+**Solution:** Assume the students in the class are numbered from 1 to 180 according to the class roll and that the students know their numbers. Then, a procedure for selecting 5 students is given below
+
+```{r ex. 6.3}
+
+set.seed(13)                            # done for reproducibility
+sample(x = 1:180, size = 5, replace=FALSE, prob = rep(1/180, 180))
+
+```
+
+**Exercise:** Randomly select 10 people from a group of 30 where the individuals are labeled from 1 to 30, where the individuals labeled 21 and 30 are twice as likely to be selected than the individuals labeled 1 through 20. What about 4 times more likely?
+
+YOU CODE HERE:
+
+```{r}
+
+# uncomment lines below to run the first scenario
+
+ set.seed(13)  # done for reproducibility
+ sample(x = 1:30, size = 10, prob = c(rep(1/40, 20), rep(2/40, 10)),replace = FALSE)
+```
+
+#################################################################################################
+
+**Exercise**
+Use `set.seed(21)`. Write a code to produce a 500 random values from uniform distribution over the interval $(1,2)$, $Unif(1,2)$ Then select a systematic sample of size `n=50` and find the mean of the sample. Compare it to the mean of the entire sample.
+
+**Hint:** every $k=\frac{500}{50}=10^{th}$ observation needs to be picked.
+
+YOU CODE HERE:
+
+```{r}
+
+#uncomment line below, if you need further hint
+ set.seed(21)  # done for reproducibility
+ x <- runif(500,1,2) # creates random sample from Unif(1,2) of size 500
+ 
+ pickone <- sample(1:10, 1) # pick one at random from 1 to 10 
+# 
+ indx <- seq(pickone, 500, 10)
+# 
+ mean(x[indx]) # the mean of the systematic sample
+
+ mean(x)
+
+```
+##################################################################################################
+
+
+Review **Example 6.9** page 361 in the text. 
+
+Sampling: **Balls in an Urn** Consider an experiment where two balls are randomly selected from an urn containing six numbered balls. First, the sampling is done with replacement (Case 1), and then the sampling is done without replacement (Case 2). List the exact sampling distributions of and $S^2$ for both cases. Finally, create graphs that compare these four distributions.
+
+**Solution** Case 1: sampling with replacement
+
+Review and try the CODE:
+
+```{r Urn}
+
+############################ R Code 6.6 #########################
+
+N <- 6
+n <- 2
+pop <- 1:N
+rs <- expand.grid(Draw1 = pop, Draw2 = pop) # Possible random samples
+xbarN <- apply(rs, 1, mean)                 # Means of all rs values
+s2N <- apply(rs, 1, var)                    # Variance of all rs values
+RSV <- cbind(rs, xbarN = xbarN, s2N = s2N)
+head(RSV, n = 1)  # First 1 row of values for Case 1 (random sampling)
+
+############################ R Code 6.7 #########################
+
+library(MASS)                # used for function fractions()
+fractions(xtabs(~xbarN)/36)  # Sampling dist of xbar (random sampling)
+fractions(xtabs(~s2N)/36)    # Sampling dist of S2 (random sampling)
+
+############################ R Code 6.8 #########################
+
+T1 <- fractions(xtabs(~xbarN)/36)
+T2 <- fractions(xtabs(~s2N)/36) 
+XBAR <- as.numeric(names(T1))             # Unique values of xbar
+S2 <- as.numeric(names(T2))               # Unique values of s2 
+MU_xbarN <- sum(XBAR*T1)                  # Expected value of xbarN
+MU_xbarN
+VAR_xbarN <- sum((XBAR - MU_xbarN)^2*T1)  # Var xbarN
+VAR_xbarN
+MU_s2N <- sum(S2*T2)                      # Expected value of s2N
+MU_s2N
+
+```
+
+**Solution** Case 2: sampling **without** replacement
+
+```{r}
+
+############################ R Code 6.9 #########################
+
+draw <- c("Draw1", "Draw2")
+SRS <- srs(1:N, n)  # possible simple random samples
+dimnames(SRS) <- list(NULL, draw)
+xbarn <- apply(SRS, 1, mean)                 # Means of all SRS values
+s2n <- apply(SRS, 1, var)                    # Variance of all SRS values
+SRSV <- cbind(SRS, xbarn = xbarn, s2n = s2n)
+head(SRSV, n = 3)  # First 3 rows of values for Case 2 (SRS)
+
+############################ R Code 6.10 #########################
+
+library(MASS)                # used for function fractions()
+fractions(xtabs(~xbarn)/15)  # Sampling dist of xbar (SRS)
+fractions(xtabs(~s2n)/15)    # Sampling dist of S2 (SRS)
+
+############################ R Code 6.11 #########################
+
+T3 <- fractions(xtabs(~xbarn)/15)
+T4 <- fractions(xtabs(~s2n)/15) 
+XBAR <- as.numeric(names(T3))             # Unique values of xbar
+S2 <- as.numeric(names(T4))               # Unique values of s2 
+MU_xbarn <- sum(XBAR*T3)                  # Expected value of xbarn
+MU_xbarn
+VAR_xbarn <- sum((XBAR - MU_xbarn)^2*T3)  # Var xbarn
+VAR_xbarn
+MU_s2n <- sum(S2*T4)                      # Expected value of s2n
+MU_s2n
+
+```
+
+##########################################################################################################
+
+
+
+
+Review **Example 6.10** page 368 in the text.
+
+**Example 6.10**
+
+It is well-known that the measurement errors committed by employees when they measure the length of a zipper in a particular assembly process follow a **normal** distribution with a mean of 0 and standard deviation of 2 millimeters.
+
+(a) 95% of errors are expected to be less than what value?
+(b) If a zipper is measured 10 times, the average of the measurements will be within how many millimeters of the truth with 95% confidence?
+(c) How many measurements must be taken for the average measurement error to be less than 1 millimeter with 95% confidence?
+
+
+**Solution:**
+(a) One has $X \sim N(0,2)$ then $Z=\frac{X-0}{2} \sim N(0,1)$.
+
+$P(-1.96 < Z <1.96)$ = 0.95 using the standard normal distribution (`qnorm(0.975)=1.959964`)
+
+Then $|X|<2*1.96=3.92$
+
+One can be `95%` confident that single errors will be less than `3.92` millimeters.
+
+(b) One has $\bar{X} \sim N(0,\frac{2}{\sqrt{10}})$ as per the **normality** of the distribution. Then 
+$$|\bar{X}|=\frac{2}{\sqrt{10}}(1.96)= 1.24mm$$ of the truth with `95%` confidence.
+
+####################################################################################################
+
+
+**Pr. 2 / page 400 in text**
+
+Let X be a $t_5$.
+
+(a) Find ℙ(X < 3).
+(b) Calculate ℙ(2 < X < 3).
+(c) Find a so that ℙ(X < a) = 0.05.
+
+**Solution:**
+(a) P(X < 3) = 0.985
+```{r}
+pt(3,5) # We want P(X < 3) / We need the cumlative distribution function (CDF)
+```
+
+(b) P(2 < X < 3) = 0.0359
+
+```{r}
+pt(3, 5) - pt(2, 5) # What is the prob that X is between 2 and 3.
+# Probability interval formula. 
+```
+
+(c) If P(X < a) = 0.05, a = −2.015.
+```{r}
+qt(0.05, 5) # Finding the quantile corresponding to cumulative prob .05. An inverse problem. use the quantile function. = only 5% of these values fall below this point
+```
+
+
+
+**Pr. 10 / page 400 in text** 
+
+Use the data frame WHEATUSA2004 from the PASWR2 package; draw all samples of sizes 2,
+3, and 4; and calculate the mean of the means. What size provides the best approximation
+to the population mean? What is the variance of these means?
+
+**Solution:** The mean of the means for samples of size two, three, and four are all equal to `1148.7333`
+(the population mean). Consequently, all samples provide equal approximations to the population mean when taking all possible samples of a given sample size. The variance of the means, however, decreases with increasing sample size from `1394012.6753` for samples
+of size two, to `894311.162` for samples of size three, to `645755.8716` for samples of size four.
+
+
+**Hint:** Review the code below, run it. 
+```{r}
+SRS2 <- srs(WHEATUSA2004$acres, 2)
+xbarSRS2 <- apply(SRS2, 1, mean)
+c(mean(xbarSRS2), var(xbarSRS2))
+
+SRS3 <- srs(WHEATUSA2004$acres, 3)
+xbarSRS3 <- apply(SRS3, 1, mean)
+c(mean(xbarSRS3), var(xbarSRS3))
+
+SRS4 <- srs(WHEATUSA2004$acres, 4)
+xbarSRS4 <- apply(SRS4, 1, mean)
+c(mean(xbarSRS4), var(xbarSRS4))
+```
+
+###########################################################################################################
+
+
+**Motivational Problem (Pr. 14 / page 401 in text)** 
+
+The vendor in charge of servicing coffee dispensers is adjusting the one located in the
+department of statistics. To maximize profit, adjustments are made so that the average
+quantity of liquid dispensed per serving is `200` milliliters per cup. Suppose the amount of
+liquid per cup follows a normal distribution and `5.5%` of the cups contain more than `224`
+milliliters.
+
+(a) Find the probability that a given cup contains between 176 and 224 milliliters.
+(b) If the machine can hold 20 liters of liquid, find the probability that the machine must be replenished before dispensing 99 cups.
+
+**Solution:**
+
+> (a) Let X - amount of coffee dispensed in a cup. Then, $X \sim N(200, \sigma)$. Given that  $P(X \ge 224)$ = 0.055 implies $\sigma = 15.017$. See below!
+
+$$P(X \ge 224) = 0.055$$ 
+$$P(\frac{X-200}{\sigma} \ge \frac{224-200}{\sigma}) = 0.055$$ or 
+$$P(\frac{X-200}{\sigma} \ge \frac{224-200}{\sigma}) = 0.055$$ or 
+
+$$P(Z \ge \frac{24}{\sigma}) = 0.055$$ or 
+
+$$1 - P(Z \le \frac{24}{\sigma}) = 0.055$$ or
+
+$$P(Z \le \frac{24}{\sigma}) = 0.945$$ implies 
+
+$$Z_{0.945}=\frac{24}{\sigma}$$ or 
+
+$$\sigma = \frac{24}{1.598}=15.017$$ since `qnorm(0.945)=1.598` (the quantile for 0.945)
+
+So now we have So, $X \sim N(200, 15.017)$ and  $P(176 < X < 224)$ can be found we the code:
+
+```{r}
+sigma <- 24/qnorm(0.945)
+pnorm(224, 200, sigma) - pnorm(176, 200, sigma) # P(176 < X < 224)
+```
+
+(b) Let `Y` represent the amount of liquid dispensed in 99 cups. That is, $Y = \sum_i X_i$ where
+$X_i \sim N(200, \sigma). It follows then that $Y \sim N(99*200,\sqrt{99*\simga^2}). P(Y \ge 20000) = 1−P(Y \le 20000) = 0.0904.
+
+```{r}
+1 - pnorm(20000, 99*200, sqrt(99*sigma^2))
+
+```
+
+###########################################################################################################
+
+**Exercise - Bootstrap resampling**
+
+Let v1 is a vector that has `100` observations which are draw from a normal distribution with $μ=5$ and $σ=2$ as before. Using this sample, we need to verify that the standard error of the mean is equal to 0.1 ($\frac{1}{\sqrt{100}}=0.1$) as calculated using the formula.
+
+
+```{r}
+set.seed(22219)
+
+v1 <- rnorm(100, mean = 7, sd = 1)
+
+```
+
+Use bootstrap to get 1000 samples of size 100 from our original sample `v1`. The sampling has to be done with replacement because otherwise we will end up drawing the same sample 1,000 times. Sampling with replacement will result in potentially drawing one observation multiple times in a sample. This will lead to different sample compositions.
+
+As before, I am going to draw bootstrap sample and get its mean in one shot. Next I will store the bootstrap means in a vector a2. This vector is the sampling distribution of the bootstrap means.
+
+
+```{r}
+# Create a vector to hold bootstrap means
+v2 <- matrix(NA, nrow = 1000, ncol = 1)
+
+set.seed(301)
+
+for(i in 1:1000){
+  # Note the replace = T option for sampling with replacement
+  n <- length(v1)
+  index <- sample(n,n,replace = T)
+  v2[i] <- mean(v1[index])  
+}
+```
+
+Try to see of the s.d. is close to 0.1
+
+```{r}
+sd(v2)
+
+```
+
+YOUR TURN: Sample `50` observations **only** each time now. How the s.d. changes?
+
+###########################################################################################################
+
+**Exercise 2 - Bootstrap resampling**
+Use `set.seed(124)` to create random sample of size 50 from $N(5,3)$. Use 20000 bootstrap sample and `boot()` function in `R` to estimate the to estimate the population mean. 
+
+```{r}
+set.seed(124)
+my.mean = function(x, indx){
+  mean( x[indx] )
+}
+
+ns50 <- rnorm(50, 5, 3) # draws sample from normal distribution of size 50
+
+norm.boot = boot(ns50, my.mean, 20000)
+norm.boot # the bootstrap estimate
+
+```
+
+
+We see the estimate is is not far from the true mean.
+
+###########################################################################################################
+
+**Exercise 3 - Bootstrap resampling**
+Use `set.seed(124)` to create random sample of size 50 from $Exp(1/5)$, exponential distribution with mean 5. Use 20000 bootstrap sample and `boot()` function in `R` to estimate the population mean. 
+
+```{r}
+set.seed(124)
+my.mean = function(x, indx){
+  mean( x[indx] )
+}
+
+exps50 <- rexp(50,1/5) # draws sample from exp(1/5) distribution of size 50
+
+exp.boot = boot(exps50, my.mean, 20000)
+exp.boot # the bootstrap estimate
+
+```
+
+
