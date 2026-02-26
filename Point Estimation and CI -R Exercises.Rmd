@@ -1,0 +1,294 @@
+---
+title: Week 7 - Point Estimation and Confidence Intervals
+author: "Valentin Milanov"
+output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+editor_options:
+
+## chunk_output_type: inline
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, echo = FALSE, message = FALSE}
+library(ggplot2)
+library(PASWR2)
+library(dplyr)
+library(MASS)
+library(binom)
+```
+
+### Point Estimation
+
+Review **Example 7.2** Suppose $X ~ Pois(λ)$, where $λ$ is unknown. Show
+$\bar X$is an unbiased estimator of λ.
+
+Do as an exercise! See text page 407 for details
+
+**Solution:** Do on paper!
+
+######################################################################################################## 
+
+**Example 7.9** page 415 in the text.
+
+A botanist interested in studying the effects of a new herbicide on
+trifolium reopens (white clover) measures and records the stem lengths
+in centimeters of ten specimens as
+`5.3, 2.8, 3.4, 7.2, 8.3, 1.7, 6.2, 9.3, 3.2, and 5.9`. Compute the
+mean, median, standard deviation, and MAD. Suppose the botanist makes a
+field error and records an `83` instead of an `8.3`. What effect will
+the recording error have on the computed quantities?
+
+```{r ex. 7.9}
+
+stem1 <- c(1.7, 2.8, 3.2, 3.4, 5.3, 5.9, 6.2, 7.2, 8.3, 9.3)
+stem2 <- c(1.7, 2.8, 3.2, 3.4, 5.3, 5.9, 6.2, 7.2, 83, 9.3)
+
+c(mean(stem1), sqrt(var(stem1))) # mean and std. dev. for stem 1 data
+c(mean(stem2), sqrt(var(stem2)))
+
+c(median(stem1), mad(stem1, constant = 1))  # median and MAD for stem 1 data
+c(median(stem2), mad(stem2, constant = 1)) 
+
+median(abs(stem1 - median(stem1))) # another way to compute MAD
+median(abs(stem2 - median(stem2)))
+
+```
+
+################################################################################################# 
+
+-   Destroyed the mean and standard deviation
+
+-   Did not affect the median and MAD
+
+Review **Example 8.5** page 461 in the text.
+
+Suppose a random sample of size n from a normal distribution with
+unknown mean μ and standard deviation `σ = 5` is taken. Calculate the
+**minimum sample size** so that one can be `95%` confident the interval
+$[\bar x-1, \bar x+1]$ contains the true value of `μ`.
+
+REVIEW THE CODE HERE:
+
+```{r}
+
+
+nsize(b = 1, sigma = 5, conf.level = .95, type = "mu")
+
+```
+
+################################################################################################## 
+
+Review **Example 8.6** page 461 in the text.
+
+⊳Sample Size: Defective Containers⊲ In a company that produces glass
+containers, the probability of producing a defective container is
+$π = 0.03$, and the probability of obtaining a functional container is
+$(1 − π) = 0.97$. Determine how many containers need to be manufactured
+to guarantee that at least `100` containers are defective with a
+probability of at least `0.95`.
+
+**Solution:**
+
+Let the random variable `X` again represent the number of defective
+containers. The distribution of `X is`Bin(n, π = 0.03)\`. The
+$P(X ≥ 100) ≥ 0.95$ is solved with the code below:
+
+```{r}
+
+n <- 0    # Number of containers
+p <- 0    # Probability
+while(p < 0.95) { # run a while cycle until p < 0.95
+   n <- n + 1
+   p <- 1 - pbinom(99, n, 0.03) # 1 -P(X<=99)
+}
+
+ans <- c(n, p) # answers assigned to a vector
+
+names(ans) <- c("Containers", "Probability")
+ans
+
+```
+
+########################################################################################################## For every 3891 containers, there will be 100 defective.
+
+Review **Example 8.8** page 465 in the text.
+
+Confidence Interval for `μ`: House Prices: Estimate the mean house price
+for three-bedroom/two-bath houses in *Watauga County, North Carolina*. A
+random sample of **14** three-bedroom/two-bath houses was taken from the
+Watauga County Multiple Listing Service real estate listings (2003), and
+the results are stored in the data frame `HOUSE`. Calculate a 95%
+confidence interval for the average price of a three bedroom/two bath
+house in this county.
+
+**Solution:**
+
+```{r}
+data(HOUSE) # load data HOUSE
+head(HOUSE) # look at the first six records
+
+qqnorm(HOUSE$price)
+
+xbar <- mean(HOUSE$price) # find the sample mean
+CT <- qt(0.975, 13)     # critical t value
+ST <- sd(HOUSE$price)   # standard deviation
+xbar + c(-1, 1)*CT*ST/sqrt(14) # constructing the CI explicitly
+
+
+# Second approach - quicker
+t.test(HOUSE$price, conf.level = 0.95)$conf
+
+```
+
+**Pr. 8 / page 511 in text** The survival times in weeks for `20` male
+rats that were exposed to a high level of radiation are
+`152 152 115 109 137 88 94 77 160 165 125 40 128 123 136 101 62 153 83 69`.
+Data are from Lawless (1982) and are stored in the data frame `RAT`.
+Load the data with `data(RAT)`
+
+(a) Construct a quantile-quantile plot of the survival times. Based on
+    the quantile-quantile plot, can normality be ruled out?
+
+(b) Construct a 92% confidence interval for the average survival time
+    for male rats exposed to high levels of radiation.
+
+**Solution:**
+
+```{r}
+data(RAT)
+dim(RAT)
+
+ggplot(data = RAT, aes(sample = survival.time)) +
+  stat_qq() +
+  theme_bw()
+
+CI <- t.test(RAT$survival.time, conf.level = 0.92)$conf # Use T-distribution as we have small sample with unknown variance
+CI
+
+```
+
+#################################################################################################### 
+
+### 8.2.7 Confidence Interval for the Mean Difference When the Differences Have a Normal Distribution
+
+**Example 8.17** page 481 in the text.
+
+To compare the speed differences between two different brands of
+workstations (Sun and Digital), the times each brand took to complete
+complex simulations were recorded. Five complex simulations were
+selected, and the five selected simulations were run on both
+workstations. The resulting times in minutes for the five simulations
+are given in Table 8.6 (**page text 481**) and stored in the data frame
+`SUNDIG`. Construct a `95%` confidence interval for μD, the average time
+difference between Sun and Digital workstations. Is one of the
+workstations faster than the other?
+
+**Solution:**
+
+```{r}
+
+qt(0.025, 4)
+t.test(SUNDIG$sun, SUNDIG$digital, paired=TRUE)$conf
+
+```
+
+**Example 8.27** page 504 in the text.
+
+**Confidence Interval and Sample Size for `π`** The Department of
+Agriculture wants to estimate the proportion of rural farm owners who
+are under `40` years of age. They take a random sample of 2000 farms and
+find that `400` of the `2000` owners are under the age of `40`.
+
+(a) Construct a `95%` Wald confidence interval for `π` using the
+    asymptotic confidence interval for `π` based on the `MLE` of given
+    in (8.43) (**text page 492**).
+
+(b) Determine the required sample size so that the maximum margin of
+    error is within `0.015` of the true value of `π` for a `95%`
+    confidence level.
+
+**Solution:**
+
+```{r}
+binom.confint(x = 400, n = 2000, conf = 0.95, methods = "asymptotic")
+
+# if no prior information of p is available use p=1/2 this maximizes the Margin of Error 
+f <- function(x){sqrt(x*(1 - x))}  # x takes place of p in f
+curve(expr = f, from = 0, to = 1, n = 500) 
+
+# use nsize() from the PASWR2 package
+
+nsize(b = 0.015, type = "pi", conf.level = 0.95)
+
+```
+
+########################################################################################################### 
+
+**Pr. 9 / page 511 in text**
+
+A large company wants to estimate the proportion of its accounts that
+are paid on time.
+
+(a) How large a sample is needed to estimate the true proportion within
+    3% with a 96% confidence level?
+
+(b) Suppose 650 out of 800 accounts are paid on time. Construct 95%
+    confidence intervals for the true proportion of accounts that are
+    paid on time using an asymptotic confidence interval, an Agresti
+    Coull confidence interval.
+
+**Solution:**
+
+```{r}
+library(binom)
+
+p <- 0.5
+alpha <- 0.04
+B <- 0.03
+
+nsize(b = B, p = p, conf.level = 0.96, type = "pi") # minimum sample size
+
+binom.confint(x = 650, n = 800, conf.level = 0.95, methods = "asymptotic")
+
+binom.confint(x = 650, n = 800, conf.level = 0.95, methods = "ac") # Agresti Coull
+```
+
+> **Motivational Problem (Pr. 7 / page 510 in text) SOLUTION**
+
+Surface-water salinity measurements were taken in a bottom-sampling
+project in Whitewater Bay, Florida. These data are stored in the data
+frame `SALINITY` in the PASWR2 package. Geographic considerations lead
+geologists to believe that the salinity variation should be normally
+distributed. If this is true, it means there is free mixing and
+interchange between open marine water and fresh water entering the bay
+(Davis, 1986).
+
+**(a)** Construct a quantile-quantile plot of the data. Does this plot
+rule out normality?
+
+**(b)** Construct a 95% confidence interval for the mean salinity
+variation.
+
+**Solution:**
+
+(a) The quantile-quantile plot does not rule out normality.
+
+```{r }
+ggplot(data = SALINITY, aes(sample = salinity)) +
+  stat_qq() +
+  theme_bw()
+
+```
+
+(b) 
+
+```{r}
+CI <- t.test(SALINITY$salinity, conf.level = 0.95)$conf
+CI
+```
