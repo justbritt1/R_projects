@@ -1,0 +1,811 @@
+---
+title: 'Week 13 - Machine Learning: Supervised Learning'
+date: "`r Sys.Date()`"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+*(Notes adapted from **Modern Data Science with R** book)*
+
+------------------------------------------------------------------------
+
+## Learning objectives
+
+By the end of this notebook, you will be able to:
+
+> Build and evaluate a **k-nearest neighbors (k-NN)** classifier in R using `tidymodels`, and explain how the choice of `k` affects model accuracy.
+
+> Apply a **Naive Bayes** classifier to a real dataset, interpret the resulting confusion matrix, and calculate predicted probabilities by hand using Bayes' theorem.
+
+> Fit a **logistic regression** model for a binary outcome, interpret the model coefficients as odds ratios, and assess model performance using a cutoff rule.
+
+------------------------------------------------------------------------
+
+## Packages used in this notebook
+
+```{r packages, warning = FALSE, message = FALSE}
+#install.packages("pkgbuild")
+#pkgbuild::check_rtools(debug = TRUE)
+
+library(mdsr)       # datasets and utilities from Modern Data Science with R
+library(ggplot2)    # data visualization
+library(tidyverse)  # data wrangling (dplyr, tidyr, etc.)
+#install.packages("tidymodels", dependencies = TRUE)
+library(tidymodels) # unified interface for model fitting and evaluation
+library(discrim)    # Naive Bayes classifier via naive_Bayes()
+library(klaR)       # engine used by discrim for Naive Bayes
+library(kknn)       # engine used for k-NN classification
+```
+
+------------------------------------------------------------------------
+
+## What is supervised classification?
+
+Before we dive in, let's set the stage. **Supervised learning** means we train a model using data that already has correct labels — in our case, whether a person earns more or less than \$50,000. The model learns patterns from this *training* data and then makes predictions on new, unseen *test* data.
+
+A **classifier** is a model that predicts which *category* (or *class*) a new observation belongs to. In this notebook, all three methods — k-NN, Naive Bayes, and logistic regression — are classifiers that predict a binary outcome (e.g., income above or below \$50k, or diabetic vs. not diabetic).
+
+A key principle in machine learning is never to evaluate your model on the same data you used to train it — that would be like studying the exact exam questions beforehand. Instead, we always hold out a **test set** to get an honest measure of performance.
+
+------------------------------------------------------------------------
+
+## Motivation: high-earners in the 1994 United States Census
+
+A marketing analyst might be interested in finding factors that can be used to predict whether a potential customer is a high-earner. The 1994 United States Census provides information that can inform such a model, with records from 32,561 adults that include a binary variable indicating whether each person makes greater or less than \$50,000 (more than \$80,000 today after accounting for inflation). This is our **response variable**.
+
+### Data preparation
+
+```{r prepare data, message=FALSE}
+library(tidyverse)
+library(mdsr)
+
+url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+
+census <- read_csv(
+  url,
+  col_names = c(
+    "age", "workclass", "fnlwgt", "education",
+    "education_1", "marital_status", "occupation", "relationship",
+    "race", "sex", "capital_gain", "capital_loss", "hours_per_week",
+    "native_country", "income"
+  )
+) %>%
+  mutate(income = factor(income))  # convert income to a factor (categorical variable)
+
+# inspect the structure: variable names, types, and first few values
+glimpse(census)
+```
+
+### Train/test split
+
+For reasons we will discuss shortly, we separate the data into two pieces at random: 80% becomes the **training** set (used to build the model) and 20% becomes the **test** set (used to evaluate the model on unseen data).
+
+```{r split data set}
+library(tidymodels)
+set.seed(364)          # set seed for reproducibility — ensures the same split each run
+
+n <- nrow(census)
+census_parts <- census %>%
+  initial_split(prop = 0.8)       # 80/20 split
+
+train <- census_parts %>% training()   # extract training data
+test  <- census_parts %>% testing()    # extract test (hold-out) data
+
+# calculate the proportion of high earners in the training set
+pi_bar <- train %>%
+  count(income) %>%
+  mutate(pct = n / sum(n)) %>%
+  filter(income == ">50K") %>%
+  pull(pct)
+
+print(c("Percent earning >$50K in training set:", round(pi_bar, 3)))
+```
+
+Note that only about 24% of those in the sample make more than \$50k. This means the **null model** — a model that simply predicts "≤\$50K" for everyone — would be correct about **76%** of the time. This is our baseline to beat.
+
+**Pro tip:** Always benchmark your predictive models against a reasonable null model. An accuracy of 77% sounds good until you realise a naive guess achieves 76%.
+
+### Model formula
+
+We define the set of predictor variables using a formula object. This formula is reused across all three classifiers below.
+
+```{r model form}
+form <- as.formula(
+  "income ~ age + workclass + education + marital_status +
+  occupation + relationship + race + sex +
+  capital_gain + capital_loss + hours_per_week"
+)
+
+form
+```
+
+------------------------------------------------------------------------
+
+## k-Nearest Neighbors (k-NN) classifier
+
+### What is k-NN?
+
+The **k-nearest neighbors** algorithm is a non-parametric, supervised learning classifier that makes predictions based on proximity. To classify a new observation, k-NN finds the `k` most similar observations in the training data (its "neighbors") and assigns the most common label among them.
+
+Key properties:
+
+-   Can be used for **regression or classification**; most commonly used for classification.
+-   Requires no model training time — the entire dataset is stored and processed at prediction time (so predictions can be slow on large datasets).
+-   Requires a **distance metric**. Euclidean distance is the most common choice.
+-   Only works with **numeric variables** (distance is undefined for categories without encoding).
+-   The choice of `k` matters: small `k` = flexible but noisy; large `k` = smoother but may underfit.
+
+### Algorithm for classification
+
+1.  For a new observation, compute its distance to every point in the training set.
+2.  Identify the `k` closest neighbors.
+3.  Assign the label that appears most often among those `k` neighbors (majority vote).
+
+**Note on "majority vote":** Technically this is *plurality* voting — the most frequent label wins, even if it has fewer than 50% of the `k` votes. This distinction matters when there are more than two classes.
+
+### Example: applying k-NN to the Census data
+
+Since Euclidean distance only works with numeric variables, we first select only the numeric predictors.
+
+```{r knn-fit}
+library(kknn)
+
+# select numeric predictors only (distance metrics don't work on character/factor variables)
+# fnlwgt is a survey weight, not a meaningful predictor, so we exclude it
+train_q <- train %>%
+  dplyr::select(income, where(is.numeric), -fnlwgt)
+
+# fit a k-NN classifier with k=5
+# scale=TRUE standardizes each variable to have mean 0 and SD 1
+# this prevents variables with large scales (e.g. capital_gain) from dominating distance
+mod_knn <- nearest_neighbor(neighbors = 5, mode = "classification") %>%
+  set_engine("kknn", scale = TRUE) %>%
+  fit(income ~ ., data = train_q)
+
+# generate predictions on the training set and attach them to the data
+pred <- train_q %>%
+  bind_cols(
+    predict(mod_knn, new_data = train_q, type = "class")
+  ) %>%
+  rename(income_knn = .pred_class)   # rename the predicted column for clarity
+
+# display the confusion matrix
+pred %>%
+  conf_mat(income, income_knn)
+```
+
+#### Reading the confusion matrix
+
+The confusion matrix compares actual labels (rows) to predicted labels (columns):
+
+|                    | Predicted ≤\$50K    | Predicted \>\$50K   |
+|--------------------|---------------------|---------------------|
+| **Actual ≤\$50K**  | True Negative (TN)  | False Positive (FP) |
+| **Actual \>\$50K** | False Negative (FN) | True Positive (TP)  |
+
+-   **True Positives (TP):** Correctly predicted high earners.
+-   **True Negatives (TN):** Correctly predicted non-high earners.
+-   **False Positives (FP):** Predicted high earner, but actually earned ≤\$50K (Type I error).
+-   **False Negatives (FN):** Predicted ≤\$50K, but actually earned \>\$50K (Type II error).
+
+**Accuracy** = (TP + TN) / Total — the proportion of all predictions that were correct.
+
+```{r knn-accuracy}
+# accuracy = (true positives + true negatives) / total observations
+pred %>%
+  accuracy(income, income_knn)
+```
+
+*Expected result: accuracy around 83–85% on the training set.*
+
+### Choosing the right `k`
+
+The choice of `k` affects model performance significantly. We can evaluate different values of `k` using a process called **cross-validation** — fitting the model at each `k` and measuring accuracy on the training data.
+
+```{r knn-tune, warning=FALSE}
+# helper function: fit a k-NN model for a given k
+knn_fit <- function(.data, k) {
+  nearest_neighbor(neighbors = k, mode = "classification") %>%
+    set_engine("kknn", scale = TRUE) %>%
+    fit(income ~ ., data = .data)
+}
+
+# helper function: evaluate accuracy of a fitted model on new data
+knn_accuracy <- function(mod, .new_data) {
+  mod %>%
+    predict(new_data = .new_data) %>%
+    mutate(income = .new_data$income) %>%
+    accuracy(income, .pred_class) %>%
+    pull(.estimate)
+}
+
+# values of k to evaluate
+ks <- c(1:10, 15, 20, 30, 40, 50)
+
+# NOTE: this block is computationally intensive.
+# Comment it out after running once to speed up re-knitting.
+knn_tune <- tibble(
+  k = ks,
+  mod = map(k, knn_fit, .data = train_q),                     # fit a model at each k
+  train_accuracy = map_dbl(mod, knn_accuracy, .new_data = train_q)  # evaluate each model
+)
+
+knn_tune
+```
+
+```{r knn-plot}
+# plot accuracy vs k — look for the "elbow" where accuracy stops improving
+ggplot(data = knn_tune, aes(x = k, y = train_accuracy)) +
+  geom_point() +
+  geom_line() +
+  labs(
+    title = "k-NN training accuracy by number of neighbors",
+    x = "k (number of neighbors)",
+    y = "Accuracy"
+  )
+```
+
+**Interpreting the plot:** Accuracy tends to decrease as `k` increases on this dataset, suggesting smaller values of `k` fit the training data better. However, be cautious: a very small `k` (especially `k=1`) may **overfit** — it memorizes the training data but may generalize poorly to new data. On the test set, a moderate `k` often performs best.
+
+**Think about it:** Why might `k=1` achieve near-perfect training accuracy but perform worse on the test set than `k=5`?
+
+------------------------------------------------------------------------
+
+## Naive Bayes classifier
+
+### What is Bayes' theorem?
+
+The Naive Bayes classifier is grounded in **Bayes' theorem**, a fundamental result in probability:
+
+$$P(y \mid x) = \frac{P(x \mid y) \cdot P(y)}{P(x)}$$
+
+In plain English: *The probability of a label* $y$ given our observed features $x$ equals how often those features appear alongside that label, scaled by how common the label is overall, divided by how often those features appear in general.
+
+Each term has a name:
+
+| Term | Name | Meaning |
+|----|----|----|
+| $P(y \mid x)$ | Posterior | Probability of the label **given** what we observed |
+| $P(x \mid y)$ | Likelihood | Probability of observing these features **given** the label |
+| $P(y)$ | Prior | Overall probability of the label (before seeing any features) |
+| $P(x)$ | Evidence | Overall probability of observing these features |
+
+### How Naive Bayes classifies
+
+To classify a new observation $x^*$, we compare:
+
+$$P(y = 1 \mid x^*) \quad \text{vs} \quad P(y = 0 \mid x^*)$$
+
+If $P(y = 1 \mid x^*) > P(y = 0 \mid x^*)$, we predict the label $y = 1$.
+
+The "naive" assumption is that all predictor variables are **conditionally independent** given the label. This is rarely true in practice (e.g., education and occupation are correlated), but the classifier often performs surprisingly well despite this simplification — hence the name *naive*.
+
+### Worked example: Bayes' theorem by hand
+
+Consider the first person in the training data — a 39-year-old white male with a bachelor's degree working in a clerical role for state government. In reality, this person earned ≤\$50K.
+
+```{r nb-head}
+# look at the first row of the training data
+train %>%
+  as.data.frame() %>%
+  head(1)
+```
+
+Using our training data, we can estimate:
+
+-   $P(>50K) = 0.243$ — about 24% of people in the training set earn more than \$50K.
+-   $P(\text{male} \mid >50K) = 0.845$ — among high earners, 84.5% are male.
+-   $P(\text{male}) = 0.670$ — overall, 67% of people in the dataset are male.
+
+Applying Bayes' theorem:
+
+$$P(>50K \mid \text{male}) = \frac{P(\text{male} \mid >50K) \cdot P(>50K)}{P(\text{male})} = \frac{0.845 \times 0.243}{0.670} = 0.306$$
+
+So, knowing a person is male raises the predicted probability of high income from 24.3% to about 30.6%.
+
+```{r nb-verify}
+# verify P(male) — proportion of males in the training set
+t1 <- train %>% pull(sex) %>% table()
+prop.table(t1)
+
+# verify P(male | >50K) — proportion of males among high earners
+t2 <- train %>% filter(income == ">50K") %>% pull(sex) %>% table()
+prop.table(t2)
+```
+
+In practice, Naive Bayes extends this to many variables simultaneously, multiplying the conditional probabilities for each feature (under the independence assumption).
+
+### Fitting the Naive Bayes classifier
+
+```{r nb-fit, warning=FALSE}
+library(discrim)
+
+# fit a Naive Bayes classifier using the full formula (includes categorical predictors)
+mod_nb <- naive_Bayes(mode = "classification") %>%
+  set_engine("klaR") %>%        # klaR is the underlying engine
+  fit(form, data = train)       # train on the training set
+
+# generate predictions on the training set
+pred <- train %>%
+  bind_cols(
+    predict(mod_nb, new_data = train, type = "class")
+  ) %>%
+  rename(income_nb = .pred_class)
+
+# display the confusion matrix
+pred %>%
+  conf_mat(income, income_nb)
+
+# calculate and display accuracy
+pred %>%
+  accuracy(income, income_nb)
+```
+
+*Expected result: accuracy around 82–84% on the training set.*
+
+**Exercise:** Apply the trained Naive Bayes classifier (`mod_nb`) to the `test` set and compare the accuracy. Does it perform better or worse than on the training set? Why might this be?
+
+*Hint: use `predict(mod_nb, new_data = test, type = "class")` and then join and evaluate as above.*
+
+**Think about it:** The Naive Bayes model uses categorical variables (like `sex`, `occupation`, `race`) that the k-NN model had to drop. How might this advantage affect its predictions?
+
+------------------------------------------------------------------------
+
+## Logistic regression classifier
+
+### Key terms
+
+| Term | Definition |
+|----|----|
+| **Odds** | The ratio of the probability of success to the probability of failure: $\frac{p}{1-p}$ |
+| **Log odds (logit)** | The natural log of the odds: $\log\!\left(\frac{p}{1-p}\right)$. Maps probabilities from $(0,1)$ to $(-\infty, +\infty)$ |
+| **Logistic response function** | The inverse of the logit; maps any real number back to a probability in $(0, 1)$ |
+| **Odds ratio** | The ratio of two odds values; used to interpret the effect of a predictor on the outcome |
+
+### The logistic response function and the logit
+
+With binary outcomes, we cannot apply ordinary linear regression directly — predicted values could fall outside the $[0,1]$ range required for probabilities. Instead, we model the **probability** $p$ that the label is 1 using the **logistic response function**:
+
+$$p = \frac{e^{\beta_0 + \beta_1 x_1 + \cdots + \beta_q x_q}}{1 + e^{\beta_0 + \beta_1 x_1 + \cdots + \beta_q x_q}}$$
+
+**Q:** What are the limits of $p$ (upper and lower) given this form? *(Answer:* $p$ is always between 0 and 1, no matter how large or small the linear combination gets.)
+
+To work with a linear model, we rearrange using **odds**. If the probability of success is $p$, the odds are:
+
+$$\text{Odds}(Y=1) = \frac{p}{1-p}$$
+
+For example: if the probability of winning is $p = 0.5$, the odds are $0.5 / 0.5 = 1.0$ (even odds). If $p = 0.75$, the odds are $0.75 / 0.25 = 3.0$ (three-to-one).
+
+Taking the natural log of the odds gives us the **logit** (or log-odds), which is linear in the predictors:
+
+$$\log\!\left(\text{Odds}(Y=1)\right) = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \cdots + \beta_q x_q$$
+
+This is the linear model we estimate. After fitting, we can convert predicted log-odds back to probabilities using $p = \frac{\text{Odds}}{1 + \text{Odds}}$. Finally, we classify each observation by applying a **cutoff rule**: if the predicted probability exceeds some threshold (commonly 0.5), predict class 1.
+
+### Example: predicting diabetes from age and BMI
+
+We now use the `NHANES` dataset to model the probability of having diabetes as a function of `Age` and `BMI`.
+
+```{r logistic-plot, warning=FALSE}
+library(NHANES)
+data(NHANES)
+
+# create a binary numeric outcome (1 = has diabetes, 0 = does not)
+NHANES <- NHANES %>%
+  mutate(has_diabetes = as.numeric(Diabetes == "Yes"))
+
+# plot diabetes status vs Age with a logistic regression smoother
+log_plot <- ggplot(data = NHANES, aes(x = Age, y = has_diabetes)) +
+  geom_jitter(alpha = 0.1, height = 0.05) +               # jitter to reduce overplotting
+  geom_smooth(method = "glm",
+              method.args = list(family = "binomial")) +   # fit a logistic curve
+  ylab("Diabetes status (1 = Yes, 0 = No)")
+
+log_plot + xlab("Age (in years)")
+
+log_plot +
+  aes(x = BMI) +
+  xlab("BMI (body mass index)")
+```
+
+**Q:** Which variable appears more strongly associated with diabetes: `Age` or `BMI`?
+
+### Fitting the logistic regression model
+
+We use `glm()` with `family = "binomial"` to fit a logistic regression model. The `binomial` family tells R that the response is binary and to use the logistic link function.
+
+```{r logistic-fit}
+# fit logistic regression with both predictors
+logreg <- glm(has_diabetes ~ BMI + Age, family = "binomial", data = NHANES)
+
+# display model coefficients with standard errors and p-values
+tidy(logreg)
+```
+
+Both `BMI` and `Age` are statistically significant predictors (p \< 0.05), meaning we have strong evidence that each is associated with diabetes risk.
+
+### Predicted probabilities
+
+The model produces **log-odds** (logit) values by default. We convert them to probabilities manually:
+
+```{r logistic-probs}
+# predict() returns log-odds (the linear component) by default
+pred <- predict(logreg)
+
+# convert log-odds to probabilities using the inverse logit formula: p = 1 / (1 + exp(-logit))
+prob <- 1 / (1 + exp(-pred))
+
+# inspect a few predicted probabilities
+prob[100:107]
+
+# summary of the predicted probability distribution
+summary(prob)
+```
+
+### Visualizing predicted probabilities across Age and BMI
+
+```{r logistic-grid, warning=FALSE}
+library(modelr)
+
+# create a grid of all Age × BMI combinations for smooth visualization
+fake_grid <- data_grid(
+  NHANES,
+  Age = seq_range(Age, 100),   # 100 evenly spaced values across the Age range
+  BMI = seq_range(BMI, 100)    # 100 evenly spaced values across the BMI range
+)
+
+# get predicted probabilities for every point on the grid
+y_hats <- fake_grid %>%
+  mutate(y_hat = predict(logreg, newdata = ., type = "response"))  # type="response" gives probabilities directly
+
+head(y_hats, 1)
+```
+
+```{r logistic-heatmap}
+# visualize predicted probability surface: red = higher diabetes probability
+ggplot(data = NHANES, aes(x = Age, y = BMI)) +
+  geom_tile(data = y_hats, aes(fill = y_hat), color = NA) +
+  geom_count(aes(color = factor(has_diabetes)), alpha = 0.8) +
+  scale_fill_gradient(low = "white", high = "red") +
+  scale_color_manual("Diabetes", values = c("gold", "black")) +
+  scale_size(range = c(0, 2)) +
+  labs(
+    fill = "Predicted\nprobability",
+    title = "Predicted probability of diabetes by Age and BMI"
+  )
+```
+
+The red region (upper right) represents older individuals with higher BMI — the group with the highest predicted probability of diabetes.
+
+### Manual probability calculation
+
+For a hypothetical subject aged 0 with BMI 12.9 (the first point in our grid):
+
+```{r logistic-manual-young}
+# compute the linear component (log-odds) using matrix multiplication
+linear_component <- c(1, 12.9, 0) %*% coef(logreg)  # c(intercept, BMI, Age) · coefficients
+
+# convert log-odds to probability
+exp(linear_component) / (1 + exp(linear_component))
+```
+
+Very few young people have diabetes, even with moderately elevated BMI. The predicted probability is about 0.1%.
+
+What about a 60-year-old with a BMI of 25?
+
+```{r logistic-manual-older}
+linear_component <- c(1, 25, 60) %*% coef(logreg)
+exp(linear_component) / (1 + exp(linear_component))
+```
+
+The predicted probability is meaningfully higher — illustrating how both age and BMI combine to increase risk.
+
+### Interpreting odds ratios
+
+One key advantage of logistic regression is **interpretability**. The coefficient $\beta_i$ for predictor $X_i$ represents the log of the **odds ratio** — the multiplicative change in the odds of $Y = 1$ for a one-unit increase in $X_i$, holding all other variables constant.
+
+For a binary predictor $X$ (0 or 1), the odds ratio is:
+
+$$\text{Odds ratio} = \frac{\text{Odds}(Y=1 \mid X=1)}{\text{Odds}(Y=1 \mid X=0)}$$
+
+An odds ratio of 2 means the outcome is twice as likely when $X = 1$ versus $X = 0$.
+
+For a numeric predictor like `BMI`, the odds ratio reflects a **one-unit increase**. The `BMI` coefficient from the model is approximately 0.0943, so:
+
+```{r logistic-or}
+# exponentiate the BMI coefficient to get the odds ratio
+odds_ratio_BMI <- exp(0.094325)
+odds_ratio_BMI
+```
+
+A one-unit increase in BMI multiplies the odds of diabetes by approximately **1.099** — about a 10% increase in odds per BMI unit, holding age constant.
+
+### Assessing logistic regression performance
+
+We use a **cutoff of 0.5**: if the predicted probability exceeds 0.5, we predict diabetes; otherwise, we predict no diabetes.
+
+```{r logistic-accuracy}
+# get predicted probabilities for the full NHANES dataset
+logit_pred_prob <- predict(logreg, newdata = NHANES, type = "response")
+
+# classify observations: 1 if predicted probability > 0.5, else 0
+pred_y <- as.numeric(logit_pred_prob > 0.5)
+
+# confusion matrix
+confusion <- table(pred_y, NHANES$has_diabetes)
+confusion
+
+# overall accuracy: proportion of correct predictions
+mean(pred_y == NHANES$has_diabetes, na.rm = TRUE)
+```
+
+*Expected result: accuracy around 91–92%. Note: the high accuracy is partly driven by the fact that most people do not have diabetes (the null model already achieves \~89%). Inspect the confusion matrix carefully — how well does the model detect actual diabetic cases?*
+
+**Note on the cutoff:** The threshold of 0.5 is a common default, but it is not always optimal. A lower cutoff (e.g., 0.3) would classify more people as diabetic — catching more true cases (higher sensitivity) but also making more false alarms (lower specificity). The right cutoff depends on the cost of each type of error in your application.
+
+**Think about it:** In a medical context, which error is more costly — a false positive (predicting diabetes when the patient is healthy) or a false negative (missing a true diabetic case)? How would you adjust the cutoff accordingly?
+
+------------------------------------------------------------------------
+
+## Exercises
+
+------------------------------------------------------------------------
+
+### Exercise 1 — Naive Bayes on the test set
+
+Apply the trained Naive Bayes classifier (`mod_nb`) to the `test` set. Report the confusion matrix and accuracy.
+
+*Hint: use `predict(mod_nb, new_data = test, type = "class")`, then join to the test data and call `conf_mat()` and `accuracy()`.*
+
+**Think about it:** Does accuracy go up or down compared to the training set result? Why would you expect a difference?
+
+<details>
+
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex1-solution, warning=FALSE}
+# apply the trained Naive Bayes model to the held-out test set
+pred_nb_test <- test %>%
+  bind_cols(
+    predict(mod_nb, new_data = test, type = "class")
+  ) %>%
+  rename(income_nb = .pred_class)   # rename predicted column for clarity
+
+# confusion matrix on the test set
+pred_nb_test %>%
+  conf_mat(income, income_nb)
+
+# accuracy on the test set
+pred_nb_test %>%
+  accuracy(income, income_nb)
+```
+
+**Interpretation:** You should see test-set accuracy in the range of **81–83%**, slightly lower than the training accuracy (\~83–84%). This is expected: models almost always perform a little worse on data they have never seen. The drop is small here, which suggests the Naive Bayes classifier generalises reasonably well and is not badly overfitting.
+
+Looking at the confusion matrix, notice that the model tends to have more difficulty correctly identifying high earners (\>\$50K) than low earners — this is typical when the positive class is the minority (only \~24% of the data). A model that struggles to detect the minority class may still report high overall accuracy because it gets the majority class right most of the time.
+
+</details>
+
+------------------------------------------------------------------------
+
+### Exercise 2 — Logistic regression on a NHANES train/test split
+
+Split the original `NHANES` data into training (80%) and test (20%) sets. Fit a logistic regression model predicting `has_diabetes` from `BMI` and `Age` using only the training set. Report the accuracy on the test set.
+
+*Hint: use `initial_split(NHANES, prop = 0.8)` followed by `training()` and `testing()`.*
+
+**Think about it:** How does the test-set accuracy compare to the in-sample accuracy reported earlier (\~91–92%)? What does any difference tell you about the model?
+
+<details>
+
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex2-solution, warning=FALSE}
+# ensure NHANES has the binary diabetes variable (created earlier in the notebook)
+NHANES <- NHANES %>%
+  mutate(has_diabetes = as.numeric(Diabetes == "Yes"))
+
+# set seed for reproducibility
+set.seed(123)
+
+# split NHANES into 80% training and 20% test
+nhanes_split <- initial_split(NHANES, prop = 0.8)
+nhanes_train <- training(nhanes_split)
+nhanes_test  <- testing(nhanes_split)
+
+# fit logistic regression on the training set only
+logreg_train <- glm(
+  has_diabetes ~ BMI + Age,
+  family  = "binomial",
+  data    = nhanes_train,
+  na.action = na.omit   # drop rows with missing BMI or Age
+)
+
+# display the model coefficients
+tidy(logreg_train)
+
+# predict on the test set (type="response" gives probabilities directly)
+test_probs <- predict(logreg_train, newdata = nhanes_test, type = "response")
+
+# classify using a 0.5 cutoff
+test_pred_y <- as.numeric(test_probs > 0.5)
+
+# confusion matrix on the test set
+confusion_test <- table(
+  predicted = test_pred_y,
+  actual    = nhanes_test$has_diabetes
+)
+confusion_test
+
+# test-set accuracy
+mean(test_pred_y == nhanes_test$has_diabetes, na.rm = TRUE)
+```
+
+**Interpretation:** Test-set accuracy should be around **91–92%**, very close to the in-sample figure. This tells us the logistic regression model is stable — it is not memorising the training data and generalises well to new observations.
+
+However, inspect the confusion matrix closely. The model correctly identifies almost all non-diabetic cases (the majority class) but misses a substantial proportion of actual diabetic cases (false negatives). High overall accuracy can be misleading when one class dominates. In a clinical setting, missing a diabetic diagnosis is a serious error, so a lower cutoff (e.g., 0.3) might be preferred even though it would reduce overall accuracy.
+
+</details>
+
+------------------------------------------------------------------------
+
+### Exercise 3 — Comparing all three classifiers on NHANES
+
+Using the same training and test split from Exercise 2, fit k-NN and Naive Bayes classifiers. Compare the test-set accuracy of all three methods (logistic regression, k-NN, Naive Bayes) in a summary table.
+
+*Hint: for k-NN, select only numeric variables. For Naive Bayes, convert `has_diabetes` to a factor before fitting.*
+
+**Think about it:** Which method performs best? Does the ranking change if you focus on false negatives instead of overall accuracy?
+
+<details>
+
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex3-solution, warning=FALSE, message=FALSE}
+# ── Step 1: prepare data ──────────────────────────────────────────────────────
+
+# for Naive Bayes and logistic regression, has_diabetes must be a factor
+nhanes_train_f <- nhanes_train %>%
+  mutate(has_diabetes = factor(has_diabetes))   # convert to factor for classification
+
+nhanes_test_f <- nhanes_test %>%
+  mutate(has_diabetes = factor(has_diabetes))
+
+# for k-NN, keep only numeric predictors (distance metrics require numeric input)
+nhanes_train_q <- nhanes_train %>%
+  dplyr::select(has_diabetes, BMI, Age) %>%
+  mutate(has_diabetes = factor(has_diabetes)) %>%
+  drop_na()   # k-NN cannot handle missing values
+
+nhanes_test_q <- nhanes_test %>%
+  dplyr::select(has_diabetes, BMI, Age) %>%
+  mutate(has_diabetes = factor(has_diabetes)) %>%
+  drop_na()
+
+# ── Step 2: fit k-NN (k=5) ───────────────────────────────────────────────────
+
+mod_knn_nhanes <- nearest_neighbor(neighbors = 5, mode = "classification") %>%
+  set_engine("kknn", scale = TRUE) %>%
+  fit(has_diabetes ~ BMI + Age, data = nhanes_train_q)
+
+# predict on the test set
+knn_acc <- nhanes_test_q %>%
+  bind_cols(
+    predict(mod_knn_nhanes, new_data = nhanes_test_q, type = "class")
+  ) %>%
+  rename(pred = .pred_class) %>%
+  accuracy(has_diabetes, pred) %>%
+  pull(.estimate)
+
+# confusion matrix for k-NN
+nhanes_test_q %>%
+  bind_cols(predict(mod_knn_nhanes, new_data = nhanes_test_q, type = "class")) %>%
+  rename(pred = .pred_class) %>%
+  conf_mat(has_diabetes, pred)
+
+# ── Step 3: fit Naive Bayes ───────────────────────────────────────────────────
+
+mod_nb_nhanes <- naive_Bayes(mode = "classification") %>%
+  set_engine("klaR") %>%
+  fit(has_diabetes ~ BMI + Age, data = nhanes_train_f %>% drop_na(BMI, Age))
+
+# predict on the test set
+nb_acc <- nhanes_test_f %>%
+  drop_na(BMI, Age) %>%
+  bind_cols(
+    predict(mod_nb_nhanes,
+            new_data = nhanes_test_f %>% drop_na(BMI, Age),
+            type = "class")
+  ) %>%
+  rename(pred = .pred_class) %>%
+  accuracy(has_diabetes, pred) %>%
+  pull(.estimate)
+
+# confusion matrix for Naive Bayes
+nhanes_test_f %>%
+  drop_na(BMI, Age) %>%
+  bind_cols(predict(mod_nb_nhanes,
+                    new_data = nhanes_test_f %>% drop_na(BMI, Age),
+                    type = "class")) %>%
+  rename(pred = .pred_class) %>%
+  conf_mat(has_diabetes, pred)
+
+# ── Step 4: logistic regression accuracy (from Exercise 2) ───────────────────
+
+logreg_acc <- mean(test_pred_y == nhanes_test$has_diabetes, na.rm = TRUE)
+
+# ── Step 5: summary comparison table ─────────────────────────────────────────
+
+comparison <- tibble(
+  Method   = c("k-NN (k=5)", "Naive Bayes", "Logistic Regression"),
+  Test_Accuracy = round(c(knn_acc, nb_acc, logreg_acc), 4)
+)
+
+comparison
+```
+
+**Interpretation:** All three classifiers achieve similar overall accuracy (\~89–92%) on this dataset, which reflects the fact that the majority class (no diabetes, \~89% of records) dominates the accuracy metric.
+
+Where the methods differ more meaningfully is in how they handle the minority class (diabetic cases):
+
+-   **Logistic regression** typically produces well-calibrated probabilities and is the most interpretable — you can quantify how much each year of age or BMI unit increases diabetes risk.
+-   **Naive Bayes** can perform competitively despite its simplifying independence assumption, and is very fast to fit.
+-   **k-NN** with only two numeric predictors (BMI and Age) has less information than the other two models on this dataset, which may hurt its ability to detect diabetics.
+
+The "best" method depends on your goal. If overall accuracy is all that matters, all three are similar. If detecting diabetic cases (minimising false negatives) matters more — as it would in a clinical setting — you should compare **sensitivity** (true positive rate) across the three methods, not just accuracy.
+
+</details>
+
+------------------------------------------------------------------------
+
+## Comparison of the three classifiers
+
+| Feature | k-NN | Naive Bayes | Logistic Regression |
+|----|----|----|----|
+| **Numeric predictors** | Required | Optional | Optional |
+| **Categorical predictors** | Not directly | Yes | Yes (as dummies) |
+| **Training time** | None (lazy learner) | Fast | Fast |
+| **Prediction time** | Slow (scans all data) | Fast | Fast |
+| **Interpretable coefficients** | No | Partial | Yes (odds ratios) |
+| **Sensitive to variable scale** | Yes — use `scale=TRUE` | No | Somewhat |
+| **Key tuning parameter** | `k` (number of neighbors) | Smoothing | Cutoff threshold |
+| **Works best when...** | Decision boundary is complex and local | Features are roughly independent | Relationship is approximately linear on logit scale |
+
+------------------------------------------------------------------------
+
+## Glossary
+
+**Accuracy:** The proportion of all predictions that were correct: (TP + TN) / Total.
+
+**Classifier:** A model that predicts which category (class) a new observation belongs to.
+
+**Confusion matrix:** A table comparing actual labels to predicted labels, showing true positives, true negatives, false positives, and false negatives.
+
+**Cross-validation:** A technique for tuning model parameters by evaluating performance across multiple subsets of the training data.
+
+**False negative (FN):** A case where the model predicted "no" but the true label was "yes" (Type II error).
+
+**False positive (FP):** A case where the model predicted "yes" but the true label was "no" (Type I error).
+
+**k (in k-NN):** The number of nearest neighbors used to make a classification decision. Small `k` = more flexible; large `k` = smoother.
+
+**Log-odds (logit):** The natural log of the odds $\log(p / (1-p))$. Maps probabilities from $(0,1)$ to $(-\infty, +\infty)$.
+
+**Null model:** A trivial baseline model that always predicts the most common class. Used to benchmark whether a learned model adds value.
+
+**Odds:** The ratio of the probability of an event occurring to the probability of it not occurring: $p / (1-p)$.
+
+**Odds ratio:** The ratio of two odds values, used to interpret logistic regression coefficients. An odds ratio \> 1 means the predictor increases the odds of the outcome.
+
+**Prior probability:** The probability of a class before observing any features — $P(y)$ in Bayes' theorem.
+
+**Test set:** Data held out from model training, used to evaluate model performance on unseen observations.
+
+**Training set:** Data used to fit (train) a model.
+
+**True negative (TN):** A case where the model correctly predicted "no."
+
+**True positive (TP):** A case where the model correctly predicted "yes."

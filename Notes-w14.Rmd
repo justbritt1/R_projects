@@ -1,0 +1,733 @@
+---
+title: "Week 14 - Machine Learning: Unsupervised Learning"
+date: "`r Sys.Date()`"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+*(Notes adapted from **Modern Data Science with R** book)*
+
+---
+
+## Learning objectives
+
+By the end of this notebook, you will be able to:
+
+> Explain the difference between supervised and unsupervised learning, and identify situations where each is appropriate.
+
+> Apply **hierarchical clustering** in R, read and interpret a dendrogram, and choose a number of clusters by cutting the tree.
+
+> Apply **k-means clustering** in R, interpret cluster centroids and sizes, and use the elbow method to choose an appropriate value of K.
+
+> Compare both clustering methods and articulate their trade-offs.
+
+---
+
+## Packages used in this notebook
+
+```{r packages, warning=FALSE, message=FALSE}
+library(ggplot2)    # data visualization
+library(tidyverse)  # data wrangling (dplyr, tidyr, purrr, etc.)
+library(mdsr)       # datasets and utilities from Modern Data Science with R
+library(fs)         # file system utilities (used for locating downloaded data)
+```
+
+---
+
+## What is unsupervised learning?
+
+In **supervised learning** (covered in Week 13), every observation has a known label or response variable $Y$ — the model learns to predict $Y$ from features $X_1, X_2, \ldots, X_p$.
+
+In **unsupervised learning**, there is no response variable. We observe only the features $X_1, X_2, \ldots, X_p$ and ask: *what structure is hidden in this data?* The goal is not to predict anything, but to **discover patterns, groupings, or relationships** that were not known in advance.
+
+**Analogy:** Supervised learning is like studying with an answer key — you know the right answer for every practice question. Unsupervised learning is like exploring a new city without a map: you start noticing neighbourhoods, clusters of shops, and patterns entirely on your own, with no one telling you what to look for.
+
+### Supervised vs. unsupervised: a quick comparison
+
+| Feature | Supervised learning | Unsupervised learning |
+|---|---|---|
+| Response variable $Y$? | Yes | No |
+| Primary goal | Predict $Y$ | Discover structure |
+| Can be objectively evaluated? | Yes (accuracy, RMSE, etc.) | Harder — no ground truth |
+| Example methods | k-NN, Naive Bayes, Logistic Regression | Hierarchical clustering, k-means |
+| Example use cases | Spam detection, disease diagnosis | Customer segmentation, gene expression groups |
+
+### Why unsupervised learning matters
+
+Unsupervised learning is more **subjective** than supervised learning — there is no simple measure of right or wrong. But it is increasingly important because:
+
+- It is often much easier to collect **unlabelled data** (e.g., from sensors, web logs, or instruments) than labelled data, which typically requires costly human annotation.
+- It can reveal genuine structure that humans would never have found manually.
+
+Real-world examples:
+- Subgroups of breast cancer patients identified by their gene expression profiles.
+- Groups of shoppers characterised by their browsing and purchase histories.
+- Movies clustered by the ratings assigned by viewers.
+
+---
+
+## 1. Clustering
+
+**Clustering** refers to a broad set of techniques for finding **subgroups** (clusters) in data, such that observations within a cluster are similar to each other and different from observations in other clusters.
+
+To do this, we must define what "similar" and "different" mean — and this is often a domain-specific choice that depends on the data and the research question.
+
+### Two main clustering methods
+
+| | Hierarchical clustering | k-means clustering |
+|---|---|---|
+| Number of clusters K | Chosen after the fact by cutting the tree | Must be specified in advance |
+| Output | A tree (dendrogram) | A flat assignment of each observation to a cluster |
+| Handles any distance metric | Yes | Primarily Euclidean distance |
+| Sensitive to outliers | Yes (especially single linkage) | Yes |
+| Scales to large data | Slower ($O(n^2)$ memory) | Faster |
+| Best when... | You want to explore all levels of grouping | You have a sense of how many groups to expect |
+
+---
+
+## 2. Hierarchical clustering
+
+### Key idea
+
+Hierarchical clustering builds a **hierarchy** of clusters in a bottom-up ("agglomerative") fashion. It does not require you to specify the number of clusters in advance — instead, it produces a tree showing all possible groupings at once.
+
+**Plain-English algorithm:**
+
+1. Start with every observation in its own cluster ($n$ clusters total).
+2. Find the two clusters that are closest to each other and merge them into one.
+3. Recompute distances between the new merged cluster and all remaining clusters.
+4. Repeat steps 2–3 until all observations belong to a single cluster.
+5. The result is a **dendrogram** — a tree where the height of each branch point indicates the dissimilarity at which those clusters were merged.
+
+To obtain a flat grouping (e.g., 4 clusters), you **cut the dendrogram** horizontally at a chosen height. Everything below the cut line forms a cluster.
+
+### Key terms
+
+| Term | Definition |
+|---|---|
+| **Dendrogram** | A tree diagram showing the hierarchy of cluster merges. Height = dissimilarity at the merge. |
+| **Distance** | A numeric measure of how different two individual observations are (e.g., Euclidean distance). |
+| **Dissimilarity / Linkage** | The rule used to measure distance *between clusters* (not individual points). See table below. |
+| **Agglomerative** | "Bottom-up" — starts with individual points and merges upward. |
+| **Cutting the tree** | Choosing a horizontal threshold on the dendrogram to produce a fixed number of clusters. |
+
+### How to read a dendrogram
+
+- Each **leaf** at the bottom represents one observation.
+- Two leaves joined by a low branch are very similar (merged early).
+- Two groups joined by a tall branch are very different (merged late, only when forced).
+- To get $k$ clusters: draw a horizontal line across the tree so it crosses exactly $k$ vertical lines. Each vertical segment below the line is a cluster.
+
+### Linkage methods
+
+A critical choice in hierarchical clustering is the **linkage method** — the rule for measuring how far apart two *clusters* are, once they each contain multiple points.
+
+| Linkage | Distance between cluster A and cluster B | Tendency |
+|---|---|---|
+| **Single** | Distance between the two *closest* points (one from each cluster) | Produces long, "chaining" clusters |
+| **Complete** | Distance between the two *farthest* points (one from each cluster) | Produces compact, roughly equal clusters |
+| **Average** | Average distance between *all pairs* of points (one from each cluster) | A balanced compromise |
+
+The default in R's `hclust()` is **complete** linkage. You can change it with the `method` argument, e.g. `hclust(d, method = "average")`.
+
+### Toy example: clustering five animals
+
+Before applying hierarchical clustering to a large real dataset, consider a simple toy example. Suppose we measure two traits — body weight (kg) and running speed (km/h) — for five animals:
+
+```{r toy-animals}
+# small toy dataset: 5 animals with 2 numeric features
+animals <- tibble(
+  animal = c("Cheetah", "Lion", "Rabbit", "Mouse", "Elephant"),
+  weight_kg = c(60,   190,  2,    0.02, 5000),
+  speed_kmh = c(112,  80,  56,   13,    25)
+)
+
+# scale variables so neither dominates due to units
+# (weight ranges 0.02–5000, speed ranges 13–112)
+animals_scaled <- animals %>%
+  column_to_rownames("animal") %>%   # use animal names as row labels
+  scale()                            # standardise each column to mean=0, SD=1
+
+# compute pairwise Euclidean distances between the 5 animals
+animal_dists <- dist(animals_scaled)
+round(as.matrix(animal_dists), 2)    # display as a symmetric matrix
+```
+
+```{r toy-dendrogram, fig.height=5, fig.width=7}
+# perform hierarchical clustering (default: complete linkage)
+hc_animals <- hclust(animal_dists)
+
+# plot the dendrogram
+plot(hc_animals,
+     main = "Dendrogram: five animals by weight and speed",
+     xlab = "", sub = "", ylab = "Dissimilarity (height)")
+
+# draw a dashed line showing where you would cut to get 2 clusters
+abline(h = 2.5, lty = 2, col = "steelblue")
+text(0.5, 2.7, "Cut here → 2 clusters", col = "steelblue", cex = 0.8, adj = 0)
+```
+
+**Interpreting this dendrogram:**
+
+- Cheetah and Lion merge first (most similar — both large, fast African predators).
+- Mouse and Rabbit merge next (both small, moderate speed).
+- Elephant stands alone for a long time — its massive weight makes it very different from all others.
+- If you cut at height ~2.5 (dashed line), you get 2 clusters: {Cheetah, Lion} and {Rabbit, Mouse, Elephant}.
+- If you cut lower (e.g., height ~1.5), you get 3 clusters: {Cheetah, Lion}, {Rabbit, Mouse}, {Elephant}.
+
+This illustrates the main power of hierarchical clustering: you can explore all possible groupings from a single tree.
+
+---
+
+### Example: clustering Toyota vehicles
+
+Now we apply hierarchical clustering to a real dataset. The US Department of Energy records fuel economy ratings for thousands of vehicles. We use the 2016 model year data to cluster Toyota vehicles by their numeric characteristics: engine displacement, number of cylinders, number of gears, city MPG, and highway MPG.
+
+#### Step 1: download the data (run once only)
+
+**Important:** Run the chunk below only once to download and unzip the data file. It will create a folder called `16data` in your working directory. Before running, go to *Session → Set Working Directory → To Source File Location* so the folder is created in the right place.
+
+```{r data-download}
+# Uncomment and run the two lines below ONE TIME to download the data.
+# After the folder '16data' exists, you can comment them out again.
+
+# src <- "https://www.fueleconomy.gov/feg/epadata/16data.zip"
+# usethis::use_zip(src)   # downloads and prompts you to unzip into '16data/'
+```
+
+#### Step 2: load and prepare the data
+
+```{r cars-load, message=FALSE}
+library(readxl)
+
+# locate the public.xlsx file inside the 16data folder
+filename <- fs::dir_ls("16data", regexp = "public\\.xlsx") %>% head(1)
+
+# read the Excel file, clean column names, select and rename key variables
+cars <- read_excel(filename) %>%
+  janitor::clean_names() %>%           # standardise column names (lowercase, underscores)
+  dplyr::select(
+    make        = mfr_name,
+    model       = carline,
+    displacement = eng_displ,          # engine displacement in litres
+    number_cyl,                        # number of cylinders
+    number_gears,                      # number of transmission gears
+    city_mpg    = city_fe_guide_conventional_fuel,
+    hwy_mpg     = hwy_fe_guide_conventional_fuel
+  ) %>%
+  distinct(model, .keep_all = TRUE) %>%  # keep only one row per model name
+  filter(make == "Toyota")               # restrict to Toyota vehicles only
+
+glimpse(cars)
+# Expected: 75 rows × 7 columns
+```
+
+> Toyota has a diverse lineup — cars, trucks, SUVs, and hybrids. Can unsupervised learning group them sensibly using only fuel economy data?
+
+#### Step 3: compute pairwise distances
+
+Before clustering, we must decide how to measure the "distance" between two cars in the feature space. The variables are on very different scales: `number_gears` ranges from 1 to 8, while `city_mpg` ranges from 13 to 58. Using raw values would allow `city_mpg` to dominate the distance calculation simply because its numbers are larger.
+
+`dist()` treats each variable as equally important by computing raw Euclidean distance. This is a pragmatic choice — domain knowledge could justify a different weighting.
+
+```{r cars-dist}
+car_diffs <- cars %>%
+  column_to_rownames(var = "model") %>%  # use model names as row labels (required by dist())
+  dist()                                  # compute pairwise Euclidean distances
+
+str(car_diffs)
+# Expected: a 'dist' object with 75*74/2 = 2775 pairwise distances
+```
+
+```{r cars-matrix}
+# convert the dist object to a full symmetric matrix for inspection
+car_mat <- car_diffs %>% as.matrix()
+
+# display the top-left 6×6 corner
+car_mat[1:6, 1:6] %>% round(digits = 2)
+# Each cell gives the Euclidean distance between two car models in the 5-variable feature space.
+# The diagonal is always 0 (a car has zero distance from itself).
+# The matrix is symmetric: distance(A, B) = distance(B, A).
+```
+
+This distance matrix is analogous to a road-map mileage table: it tells you how far apart every pair of cars is in "feature space", but it does not tell you their absolute positions — only their relative separations.
+
+#### Step 4: build and plot the dendrogram
+
+```{r cars-dendrogram, fig.height=14, fig.width=8}
+library(ape)   # provides as.phylo() for phylogenetic tree plotting; install if needed
+
+car_diffs %>%
+  hclust() %>%           # hierarchical clustering with default complete linkage
+  as.phylo() %>%         # convert to phylogenetic tree format for a cleaner plot
+  plot(cex = 0.8, label.offset = 1,
+       main = "Hierarchical clustering of 2016 Toyota models")
+```
+
+**How to read this plot:** Each leaf is one Toyota model. Leaves joined by a short horizontal branch are very similar. The longer a branch, the more dissimilar those groups were when they were forced to merge.
+
+**What the clustering reveals:**
+
+1. **Hybrids split off first** (the first major fork in the tree). Hybrid vehicles have fundamentally different powertrain characteristics — especially much higher MPG — making them very dissimilar from all conventional vehicles. The algorithm discovers this automatically without ever being told which models are hybrids.
+
+2. **Trucks and SUVs vs. smaller cars.** Among conventional vehicles, the next major split separates large trucks and SUVs (Sienna, Tacoma, Sequoia, Tundra, Land Cruiser — high displacement, low MPG) from smaller passenger cars and crossovers (Camry, Corolla, Yaris, RAV4 — lower displacement, higher MPG).
+
+3. **Finer splits within groups** reveal even more subtle groupings: sporty variants (higher displacement within the same model family) tend to cluster away from economy variants.
+
+#### Step 5: cut the tree into flat clusters
+
+To produce a fixed number of clusters from the dendrogram, use `cutree()`:
+
+```{r cars-cutree}
+# perform hierarchical clustering and store the result
+hc_cars <- car_diffs %>% hclust()
+
+# cut the tree into 3 groups
+car_clusters <- cutree(hc_cars, k = 3)
+
+# add the cluster label to the cars data frame
+cars_clustered <- cars %>%
+  mutate(cluster = car_clusters)
+
+# show which models fall in each cluster
+cars_clustered %>%
+  dplyr::select(model, cluster) %>%
+  arrange(cluster) %>%
+  print(n = Inf)   # print all 75 rows
+
+# Plot the hierarchical clustering dendrogram
+# hang = -1 aligns all leaf labels at the same level for a cleaner look
+# cex = 0.6 reduces the size of the labels to avoid overlap
+plot(hc_cars, hang = -1, cex = 0.5)
+
+# Draw rectangles around the clusters to show the "cut" into groups
+# k = 3 specifies that the tree is divided into 3 clusters
+# border = 2:4 uses different colors (from the default palette) for each cluster box
+rect.hclust(hc_cars, k = 3, border = 2:4)
+
+```
+
+```{r cars-cluster-summary}
+# summarise each cluster by its average characteristics
+cars_clustered %>%
+  group_by(cluster) %>%
+  summarise(
+    n_models     = n(),
+    avg_displ    = round(mean(displacement, na.rm = TRUE), 2),
+    avg_cyl      = round(mean(number_cyl,   na.rm = TRUE), 1),
+    avg_city_mpg = round(mean(city_mpg,     na.rm = TRUE), 1),
+    avg_hwy_mpg  = round(mean(hwy_mpg,      na.rm = TRUE), 1)
+  )
+# Cluster 1: likely hybrids (high MPG, low displacement)
+# Cluster 2: likely small/mid-size cars (moderate MPG, moderate displacement)
+# Cluster 3: likely trucks/SUVs (low MPG, high displacement)
+```
+
+---
+
+## 3. Additional example: clustering US states by crime rates
+
+Before moving to k-means, here is a second hierarchical clustering example using `USArrests` — a built-in base R dataset, so no download is needed. It records four crime-related variables for all 50 US states in 1973: murder rate, assault rate, percentage urban population, and rape rate.
+
+```{r usarrests-hclust, fig.height=10, fig.width=8}
+# USArrests is built into base R — no library needed
+data(USArrests)
+glimpse(USArrests)
+
+# scale variables before clustering — rates are on very different scales
+# (Murder: 0.8–17.4; Assault: 45–337; UrbanPop: 32–91; Rape: 7.3–46.0)
+arrests_scaled <- scale(USArrests)
+
+# compute distances and cluster
+arrests_dist <- dist(arrests_scaled)
+hc_arrests   <- hclust(arrests_dist, method = "average")  # using average linkage
+
+# plot the dendrogram
+plot(hc_arrests,
+     main  = "Hierarchical clustering of US states by crime rates (1973)",
+     xlab  = "", sub = "", ylab = "Dissimilarity (height)",
+     cex   = 0.8)
+
+# cut to 4 clusters and colour the branches
+library(dendextend)   # install if needed: install.packages("dendextend")
+dend <- as.dendrogram(hc_arrests)
+dend <- color_branches(dend, k = 4)
+plot(dend, main = "US states — 4 clusters highlighted", ylab = "Dissimilarity")
+```
+
+```{r usarrests-summary}
+# assign cluster labels (k = 4) and summarise
+state_clusters <- cutree(hc_arrests, k = 4)
+
+USArrests %>%
+  mutate(state   = rownames(USArrests),
+         cluster = state_clusters) %>%
+  group_by(cluster) %>%
+  summarise(
+    states       = paste(state, collapse = ", "),
+    avg_murder   = round(mean(Murder),   1),
+    avg_assault  = round(mean(Assault),  1),
+    avg_urbanpop = round(mean(UrbanPop), 1),
+    avg_rape     = round(mean(Rape),     1),
+    n            = n()
+  )
+# Interpretation guide:
+# High-crime clusters tend to be southern states with lower urban populations.
+# Low-crime clusters tend to be upper-midwest or New England states.
+# This is entirely discovered from the data — no geographic labels were used.
+```
+
+**Key takeaway:** The algorithm groups states with similar crime profiles purely from the numeric data — no geographic information was provided. The resulting clusters roughly correspond to regions that share socioeconomic characteristics.
+
+---
+
+## 4. k-means clustering
+
+### Key idea
+
+k-means is a simpler, faster alternative to hierarchical clustering. Instead of building a tree, it directly assigns each observation to one of **K** clusters, where K is specified in advance.
+
+The goal is to minimise the **within-cluster sum of squares (WCSS)** — the total squared distance of every point from the mean of its assigned cluster. Smaller WCSS means observations are tightly packed around their cluster centres.
+
+$$\text{WCSS} = \sum_{k=1}^{K} \sum_{i \in \text{cluster } k} \sum_{j=1}^{p} \left(x_{ij} - \bar{x}_{kj}\right)^2$$
+
+where $\bar{x}_{kj}$ is the mean of variable $j$ in cluster $k$ (the **centroid**).
+
+**What is a centroid?** A centroid is simply the average position of all points in a cluster — think of it as the cluster's centre of gravity. In two dimensions it is a single $(x, y)$ coordinate; in $p$ dimensions it is a vector of $p$ means, one per variable.
+
+### Algorithm (step by step)
+
+1. **Initialise:** Randomly assign each observation a cluster label from 1 to K.
+2. **Compute centroids:** For each cluster, calculate the mean of all observations in it. This is the cluster centroid.
+3. **Reassign:** Assign each observation to the cluster whose centroid is closest (using Euclidean distance).
+4. **Repeat** steps 2–3 until no observation changes cluster — the algorithm has converged.
+
+Because step 1 is random, different starting points can yield different final clusters. It is best practice to run k-means multiple times with different random starts (`nstart` argument in R) and keep the solution with the lowest WCSS.
+
+### Choosing K: the elbow method
+
+One of the most common questions with k-means is: **how many clusters should I use?**
+
+The **elbow method** plots WCSS against K. As K increases, WCSS always decreases (more clusters = tighter fit). Look for the "elbow" — the point where the rate of decrease slows sharply. That K is usually a good choice.
+
+```{r elbow-demo}
+# Demonstrate the elbow method using USArrests (already scaled above)
+set.seed(42)
+
+# compute WCSS for K = 1 to 10
+wcss_values <- sapply(1:10, function(k) {
+  kmeans(arrests_scaled, centers = k, nstart = 20)$tot.withinss
+  # tot.withinss = total within-cluster sum of squares across all K clusters
+})
+
+# plot the elbow curve
+tibble(K = 1:10, WCSS = wcss_values) %>%
+  ggplot(aes(x = K, y = WCSS)) +
+  geom_point(size = 3) +
+  geom_line() +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title = "Elbow method for USArrests clustering",
+    x     = "Number of clusters (K)",
+    y     = "Within-cluster sum of squares (WCSS)"
+  )
+# Look for the 'elbow': the bend where adding more clusters gives diminishing returns.
+# Here, the curve typically bends around K = 3 or K = 4.
+```
+
+### Example: geospatial clustering of world cities
+
+Consider the 4,000 most populous cities in the world from the `world_cities` dataset in `mdsr`. We use only **latitude** and **longitude** as features — no country names, no continent labels, nothing else. The question is: can k-means recover continent-level geographic structure from coordinates alone?
+
+```{r cities-select}
+# select the 4,000 largest cities and keep only their coordinates
+BigCities <- world_cities %>%
+  arrange(desc(population)) %>%   # sort from largest to smallest
+  head(4000) %>%
+  dplyr::select(longitude, latitude)
+
+glimpse(BigCities)
+# Expected: 4,000 rows, 2 columns (longitude, latitude only — no city names)
+```
+
+```{r cities-kmeans}
+set.seed(15)   # set seed so results are reproducible
+
+# run k-means with K = 6 clusters and 10 different random starts
+# nstart = 10 means: run the algorithm 10 times, keep the best result (lowest WCSS)
+km <- kmeans(BigCities, centers = 6, nstart = 10)
+
+# cluster sizes: how many of the 4,000 cities fall in each cluster?
+km$size
+# Each number is the count of cities assigned to that cluster.
+
+# cluster centroids: the mean longitude and latitude of each cluster
+km$centers
+# Each row is one cluster centre. These are geographic "centres of gravity"
+# for each group — you can roughly match them to continental regions.
+
+# attach the cluster assignment back to the data for plotting
+BigCities <- BigCities %>%
+  mutate(cluster = as.character(km$cluster))  # as.character for discrete colour scale
+
+# plot — each dot is a city, coloured by cluster
+BigCities %>%
+  ggplot(aes(x = longitude, y = latitude, color = cluster)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  labs(
+    title  = "k-means clustering of 4,000 world cities (K = 6)",
+    x      = "Longitude",
+    y      = "Latitude",
+    color  = "Cluster"
+  ) +
+  theme_minimal()
+```
+
+**What did the algorithm identify?**
+
+The k-means algorithm — given only coordinates, with no knowledge of geography — recovers groupings that closely correspond to the world's major continental land masses:
+
+| Approximate cluster | Corresponding region |
+|---|---|
+| Cluster centred near (−90, 40) | North America |
+| Cluster centred near (−55, −15) | South America |
+| Cluster centred near (15, 50) | Europe |
+| Cluster centred near (20, 5) | Africa |
+| Cluster centred near (78, 22) | South & Southeast Asia |
+| Cluster centred near (120, 35) | East Asia |
+
+This is a compelling demonstration that unsupervised learning can discover meaningful real-world structure from raw numbers, without any human guidance about what those numbers represent.
+
+---
+
+## 5. Comparison of clustering methods
+
+| Feature | Hierarchical clustering | k-means |
+|---|---|---|
+| **K required upfront?** | No — choose after seeing the dendrogram | Yes — must specify K before running |
+| **Output** | Dendrogram (tree) | Flat cluster assignments |
+| **Distance metric** | Any (Euclidean, Manhattan, etc.) | Primarily Euclidean |
+| **Sensitive to outliers?** | Yes (especially single linkage) | Yes (outliers shift centroids) |
+| **Scalability** | Slow on large data ($O(n^2)$ memory) | Faster and more scalable |
+| **Reproducible?** | Yes (deterministic) | No — random initialisation; use `set.seed()` and `nstart > 1` |
+| **Best used when...** | You want to explore all grouping levels; dataset is small–medium | You have a sense of K; dataset is large |
+
+---
+
+## 6. Exercises
+
+---
+
+### Exercise 1 — Cut the Toyota dendrogram and profile the clusters
+
+Using the Toyota vehicles example, cut the hierarchical clustering tree (`hc_cars`) into **4 clusters** using `cutree()`. Produce a summary table showing the average `city_mpg`, `hwy_mpg`, `displacement`, and `number_cyl` for each cluster. Based on the averages, give each cluster a descriptive label (e.g., "hybrids", "economy cars", "mid-size SUVs", "full-size trucks").
+
+*Hint: use `cutree(hc_cars, k = 4)` to get cluster assignments, then `mutate()` and `group_by() %>% summarise()` to profile them.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex1-solution}
+# cut the Toyota dendrogram into 4 clusters
+car_clusters_4 <- cutree(hc_cars, k = 4)
+
+# add cluster labels to the cars data frame
+cars_4 <- cars %>%
+  mutate(cluster = car_clusters_4)
+
+# profile each cluster
+cluster_profile <- cars_4 %>%
+  group_by(cluster) %>%
+  summarise(
+    n_models     = n(),
+    avg_displ    = round(mean(displacement, na.rm = TRUE), 2),
+    avg_cyl      = round(mean(number_cyl,   na.rm = TRUE), 1),
+    avg_city_mpg = round(mean(city_mpg,     na.rm = TRUE), 1),
+    avg_hwy_mpg  = round(mean(hwy_mpg,      na.rm = TRUE), 1)
+  )
+
+print(cluster_profile)
+
+# list the models in each cluster
+cars_4 %>%
+  dplyr::select(model, cluster) %>%
+  arrange(cluster) %>%
+  print(n = Inf)
+```
+
+**Interpretation:** With 4 clusters, the tree typically separates into:
+
+- **Cluster 1 — Hybrids:** Very high MPG (city ~50+, hwy ~45+), low displacement (~1.8L), few cylinders (~4). Models: Prius, Prius C, Prius V, etc.
+- **Cluster 2 — Economy/compact cars:** Good MPG (city ~28–35), modest displacement (~1.5–2.0L). Models: Corolla, Yaris, RAV4 (smaller engine variants).
+- **Cluster 3 — Mid-size cars and SUVs:** Moderate MPG (city ~20–27), moderate displacement (~2.5–3.5L). Models: Camry, Avalon, Highlander, Venza.
+- **Cluster 4 — Trucks and large SUVs:** Lowest MPG (city ~13–18), highest displacement (~4.0–5.7L), most cylinders (~6–8). Models: Tundra, Sequoia, Land Cruiser, Tacoma 4WD.
+
+The key insight is that the algorithm produces this meaningful grouping entirely from numeric fuel-economy data — it was never told which vehicles are hybrids or trucks.
+
+</details>
+
+---
+
+### Exercise 2 — Apply k-means to USArrests and use the elbow method to choose K
+
+Using the scaled `USArrests` data (`arrests_scaled`, created earlier in the notebook), apply the elbow method for K = 1 to 10. Based on the plot, choose a value of K. Then run k-means with that K and `nstart = 25`. Profile each resulting cluster by its average crime rates, and give each a descriptive label.
+
+*Hint: use `sapply(1:10, function(k) kmeans(arrests_scaled, centers = k, nstart = 20)$tot.withinss)` for the elbow plot. Then run `kmeans(arrests_scaled, centers = K, nstart = 25)` for your chosen K.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex2-solution}
+set.seed(123)
+
+# --- Step 1: elbow method ---
+wcss_arrests <- sapply(1:10, function(k) {
+  kmeans(arrests_scaled, centers = k, nstart = 20)$tot.withinss
+})
+
+tibble(K = 1:10, WCSS = wcss_arrests) %>%
+  ggplot(aes(x = K, y = WCSS)) +
+  geom_point(size = 3) +
+  geom_line() +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title = "Elbow method — USArrests",
+    x = "Number of clusters (K)",
+    y = "Within-cluster sum of squares"
+  )
+# The elbow is typically visible at K = 3 or K = 4.
+# We'll use K = 4 here, which matches the hierarchical solution above.
+
+# --- Step 2: fit k-means with chosen K ---
+set.seed(123)
+km_arrests <- kmeans(arrests_scaled, centers = 4, nstart = 25)
+
+# cluster sizes
+km_arrests$size
+
+# --- Step 3: profile clusters ---
+USArrests %>%
+  mutate(
+    state   = rownames(USArrests),
+    cluster = km_arrests$cluster
+  ) %>%
+  group_by(cluster) %>%
+  summarise(
+    n            = n(),
+    avg_murder   = round(mean(Murder),   1),
+    avg_assault  = round(mean(Assault),  1),
+    avg_urbanpop = round(mean(UrbanPop), 1),
+    avg_rape     = round(mean(Rape),     1),
+    states       = paste(sort(state), collapse = ", ")
+  )
+```
+
+**Interpretation:** Four clusters typically emerge:
+
+- **Cluster A — High crime, high urban:** States with high assault and murder rates, high urban population. Includes states like Florida, Nevada, California.
+- **Cluster B — High crime, lower urban:** States with high crime rates but less urbanised. Includes several southern states.
+- **Cluster C — Moderate crime:** States close to the national average on all metrics.
+- **Cluster D — Low crime:** States with low rates across all four measures, often upper-Midwest or New England (e.g., North Dakota, Vermont, Maine).
+
+Note that the exact cluster labels (1–4) are arbitrary and may differ between runs even with `set.seed()` because the cluster numbering is not stable across runs — what matters is the *profile* of each cluster, not its number.
+
+**Comparing k-means to hierarchical:** Both approaches with K = 4 produce broadly similar groupings of states. The k-means solution may differ slightly because it optimises WCSS (a Euclidean criterion) while hierarchical clustering used average linkage. Both are valid — the "best" depends on whether you prefer interpretability (hierarchical) or computational efficiency (k-means).
+
+</details>
+
+---
+
+### Exercise 3 — Was K = 6 a good choice for the cities dataset?
+
+Apply the elbow method to the `BigCities` dataset (longitude and latitude of the 4,000 largest cities) for K = 1 to 12. Based on the elbow plot, determine whether K = 6 was a reasonable choice. Then re-run k-means with your preferred K and compare the cluster centroids to the K = 6 solution. Do the clusters still correspond to continental regions?
+
+*Hint: the elbow method for 4,000 points may take 30–60 seconds. Use `nstart = 5` instead of 10 to speed it up.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex3-solution}
+set.seed(99)
+
+# --- Step 1: elbow method for BigCities ---
+# Note: this can take ~30-60 seconds for 4,000 points × 12 K values
+wcss_cities <- sapply(1:12, function(k) {
+  kmeans(BigCities %>% dplyr::select(longitude, latitude),
+         centers = k, nstart = 5)$tot.withinss
+})
+
+tibble(K = 1:12, WCSS = wcss_cities) %>%
+  ggplot(aes(x = K, y = WCSS)) +
+  geom_point(size = 3) +
+  geom_line() +
+  scale_x_continuous(breaks = 1:12) +
+  labs(
+    title = "Elbow method — world cities (latitude & longitude)",
+    x = "Number of clusters (K)",
+    y = "Within-cluster sum of squares"
+  )
+# The elbow is typically visible around K = 5 to K = 7.
+# K = 6 is within this range, confirming it is a reasonable choice.
+
+# --- Step 2: compare K=6 to K=7 ---
+set.seed(99)
+km6 <- kmeans(BigCities %>% dplyr::select(longitude, latitude), centers = 6, nstart = 10)
+km7 <- kmeans(BigCities %>% dplyr::select(longitude, latitude), centers = 7, nstart = 10)
+
+cat("K=6 cluster centroids:\n")
+round(km6$centers, 1)
+
+cat("\nK=7 cluster centroids:\n")
+round(km7$centers, 1)
+
+# --- Step 3: plot K=7 for comparison ---
+BigCities %>%
+  mutate(cluster = as.character(km7$cluster)) %>%
+  ggplot(aes(x = longitude, y = latitude, color = cluster)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  labs(
+    title = "k-means with K = 7 — world cities",
+    x = "Longitude", y = "Latitude", color = "Cluster"
+  ) +
+  theme_minimal()
+```
+
+**Interpretation:**
+
+The elbow plot typically shows a clear bend around K = 5–7, confirming that K = 6 was a reasonable and defensible choice.
+
+With K = 6, the clusters map naturally onto six major world regions (as described in the notebook). With K = 7, one of the larger continental regions (often Asia, which contains the highest density of large cities) tends to split into two sub-clusters — for example, South Asia (India, Bangladesh) separating from East Asia (China, Japan, Korea). Whether this additional split is meaningful depends on your purpose:
+
+- If the goal is continent-level grouping, K = 6 is more interpretable.
+- If the goal is identifying finer sub-regions within Asia, K = 7 (or higher) may be more useful.
+
+This illustrates an important general principle: the elbow method narrows down K to a plausible range, but **the final choice should always be guided by domain knowledge and the intended use of the clusters**.
+
+</details>
+
+---
+
+## Glossary
+
+**Agglomerative clustering:** A "bottom-up" approach to hierarchical clustering that starts with individual observations and merges them upward until a single cluster remains.
+
+**Centroid:** The mean position of all observations in a cluster. In $p$ dimensions, it is a vector of $p$ means — one per variable. The centroid is the cluster's "centre of gravity."
+
+**Cluster:** A group of observations that are more similar to each other than to observations in other groups.
+
+**Dendrogram:** A tree diagram produced by hierarchical clustering. Each leaf is one observation. The height at which two branches merge indicates the dissimilarity between those groups at the point of merging. Cutting the tree horizontally produces a flat clustering.
+
+**Distance matrix:** A symmetric $n \times n$ table where cell $(i, j)$ contains the distance between observations $i$ and $j$. The diagonal is always 0.
+
+**Elbow method:** A heuristic for choosing K in k-means. Plot WCSS against K and look for the "elbow" — the point where the rate of decrease slows sharply. Values of K beyond the elbow yield diminishing returns.
+
+**Feature scaling:** Standardising variables (e.g., subtracting the mean and dividing by the standard deviation) before clustering, so no single variable dominates the distance calculation due to its units or range.
+
+**Linkage method:** The rule used to measure dissimilarity between two clusters (as opposed to between two individual observations). Common options: single (closest pair), complete (farthest pair), average (mean of all pairs).
+
+**Unsupervised learning:** A class of machine learning methods that discover structure in data without using a response variable. There is no "correct answer" to compare against.
+
+**Within-cluster sum of squares (WCSS):** The total squared distance of every observation from the centroid of its assigned cluster. k-means minimises this quantity. Lower WCSS means tighter, more compact clusters.
