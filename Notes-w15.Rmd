@@ -1,0 +1,1157 @@
+---
+title: 'Week 15 - What is Statistical Data Mining: An Introductory Review of Methods'
+date: "`r Sys.Date()`"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+---
+
+## Learning objectives
+
+By the end of this notebook, you will be able to:
+
+> **Define** statistical data mining and distinguish it from traditional statistics and machine learning.
+
+> **Apply** classification with a decision tree in R — build, visualise, and evaluate the model using a confusion matrix and accuracy.
+
+> **Apply** k-means clustering in R — fit clusters, visualise results, and compare recovered groups to known labels.
+
+> **Explain** the three key metrics — support, confidence, and lift — used in association rule mining, and mine rules from a transactional dataset.
+
+> **Describe** the main techniques in text mining, time series analysis, and social network analysis, and run a worked example for each.
+
+> **Identify** the current landscape of big data tools available to R users and explain when each is appropriate.
+
+---
+
+## Packages used in this notebook
+
+```{r packages}
+# --- Core data wrangling and visualisation ---
+library(tidyverse)    # dplyr, ggplot2, tidyr, purrr, etc.
+
+# --- Modelling framework ---
+library(tidymodels)   # unified interface for train/test splits and evaluation
+
+# --- Classification ---
+library(rpart)        # CART decision trees (rpart)
+library(partykit)     # conditional inference trees (ctree) and forests (cforest)
+library(ranger)       # fast random forest implementation
+
+# --- Association rule mining ---
+library(arules)       # apriori() and eclat() for rule mining
+library(arulesViz)    # visual exploration of association rules
+
+# --- Text mining ---
+library(tm)           # Corpus, DocumentTermMatrix, text cleaning pipeline
+library(tidytext)     # tidy interface to text analysis (unnest_tokens, tf_idf)
+library(wordcloud)    # word cloud visualisations
+
+# --- Time series ---
+library(forecast)     # auto.arima(), forecast(), autoplot() for time series
+
+# --- Social network analysis ---
+library(igraph)       # graph objects, centrality measures, community detection
+```
+
+---
+
+## 1. What is statistical data mining?
+
+**Statistical data mining** is the process of discovering patterns, relationships, and structure in large or complex datasets by combining statistical inference with computational algorithms. It is sometimes called **knowledge discovery in databases (KDD)**.
+
+A few key distinctions:
+
+| Concept | Focus | Key question |
+|---|---|---|
+| **Traditional statistics** | Testing hypotheses about small, clean datasets | Is this effect real? |
+| **Machine learning** | Optimising predictive accuracy | Can I predict this accurately? |
+| **Statistical data mining** | Discovering unknown structure in large, messy data | What patterns are hiding in this data? |
+
+In practice the three overlap heavily. A data mining project might use statistical tests to validate patterns, machine learning algorithms to classify records, and visualisation to communicate structure.
+
+### 1.1 The seven methods covered this week
+
+The table below provides an orientation map for the whole notebook.
+
+| Method | Supervised? | Output | Real-world example |
+|---|---|---|---|
+| **Classification** | Yes (labelled data) | A class label for each observation | Email spam / not spam |
+| **Clustering** | No | Group memberships | Customer segments by purchase behaviour |
+| **Association rules** | No | If-then rules between items | "Customers who buy bread also buy butter" |
+| **Text mining** | No / semi | Word frequencies, topics, sentiment | Summarising 10,000 customer reviews |
+| **Time series analysis** | No | Trend, seasonality, forecast | Predicting next quarter's sales |
+| **Social network analysis** | No | Graph metrics, communities | Finding influential users in a network |
+| **Big data** | Both | Scalable version of any of the above | Processing billions of web clicks |
+
+---
+
+## 2. Classification with R
+
+### 2.1 What is classification?
+
+**Classification** is the task of assigning each observation to one of a fixed set of pre-defined categories (classes), learning the decision rule from **labelled** training data. Because labels are provided, classification is **supervised learning**.
+
+Key terms:
+
+| Term | Definition |
+|---|---|
+| **Training set** | Labelled data used to fit the model |
+| **Test set** | Held-out data used to evaluate performance honestly |
+| **Decision boundary** | The line (or surface) separating predicted classes |
+| **Confusion matrix** | A table comparing predicted vs. actual labels |
+| **Accuracy** | Proportion of observations correctly classified |
+
+Classification differs from **clustering** (no labels — groups are discovered, not assigned) and from **regression** (the output is a continuous number, not a category).
+
+### 2.2 R packages for classification
+
+| Package | Method | Notes |
+|---|---|---|
+| `partykit` | Conditional inference trees (`ctree`), random forests (`cforest`) | Statistically motivated splits; good default |
+| `rpart` | CART decision trees | Classic algorithm; very widely used |
+| `ranger` | Fast random forest | Best-in-class speed; recommended for production |
+| `e1071` / `kernlab` | Support vector machines (SVM) | Strong on medium-sized datasets |
+| `nnet` / `neuralnet` | Neural networks | Useful for simple architectures |
+| `yardstick` (tidymodels) | Performance evaluation | Accuracy, ROC-AUC, confusion matrix |
+
+### 2.3 Example: classifying iris flower species
+
+The classic `iris` dataset contains measurements of 150 flowers across three species (*setosa*, *versicolor*, *virginica*). We will build and evaluate two classifiers: a conditional inference tree and a random forest.
+
+#### Step 1 — Data preparation and train/test split
+
+```{r classification_data}
+# inspect the iris dataset structure
+str(iris)
+
+# set a random seed so results are reproducible
+set.seed(465)
+
+n <- nrow(iris)   # 150 observations
+
+# randomly sample 30% of row indices for the test set
+# the remaining 70% form the training set
+ind <- sample.int(n, size = round(0.3 * n))
+
+iris.train <- iris[-ind, ]   # training set: 70% of rows
+iris.test  <- iris[ ind, ]   # test set:     30% of rows
+
+cat("Training rows:", nrow(iris.train), "\n")
+cat("Testing rows: ", nrow(iris.test),  "\n")
+
+# baseline (null model) accuracy: always predict the majority class
+# a good model should clearly beat this
+majority_class <- names(sort(table(iris.train$Species), decreasing = TRUE))[1]
+null_accuracy  <- mean(iris.test$Species == majority_class)
+cat("Null model accuracy (always predict '", majority_class, "'):", round(null_accuracy, 3), "\n")
+```
+
+#### Step 2 — Build a conditional inference tree
+
+A **conditional inference tree** (`ctree`) differs from a standard CART decision tree in how it chooses splits. Rather than maximising an impurity measure (like Gini index), `ctree` uses statistical significance tests at each node. This makes it less prone to overfitting and avoids the need to prune.
+
+```{r classification_ctree}
+# define the formula: predict Species from all four measurements
+iris.formula <- Species ~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width
+
+# fit the conditional inference tree on training data only
+iris.ctree <- partykit::ctree(iris.formula, data = iris.train)
+
+# print a text summary of the tree structure
+print(iris.ctree)
+```
+
+```{r classification_ctree_plot, fig.height=8, fig.width=10}
+# visualise the tree
+# each terminal node shows the predicted class distribution
+plot(iris.ctree,
+     main = "Conditional inference tree for iris species classification")
+```
+
+**Reading the tree:** Each internal node shows a variable and a split threshold chosen by a significance test. The terminal (leaf) nodes show bar charts of the class distribution for observations that reach that node. The predicted class for a new observation is the majority class in the leaf it falls into.
+
+#### Step 3 — Predict and evaluate
+
+```{r classification_predict}
+# generate predicted class labels on the held-out test set
+pred <- predict(iris.ctree, newdata = iris.test)
+
+# confusion matrix: rows = actual class, columns = predicted class
+cm <- table(Actual = iris.test$Species, Predicted = pred)
+cm
+```
+
+**Reading the confusion matrix:**
+
+- **Diagonal cells** (top-left to bottom-right) are correct predictions.
+- **Off-diagonal cells** are errors. For example, if row = *versicolor* and column = *virginica*, those are versicolor flowers that the model incorrectly called virginica.
+- A perfect classifier would have zeros everywhere off the diagonal.
+
+```{r classification_accuracy}
+# overall accuracy: sum of diagonal divided by total test observations
+accuracy_ctree <- sum(diag(cm)) / sum(cm)
+cat("Conditional inference tree accuracy:", round(accuracy_ctree, 3), "\n")
+cat("Null model accuracy:                ", round(null_accuracy, 3), "\n")
+cat("Improvement over null model:        ", round(accuracy_ctree - null_accuracy, 3), "\n")
+```
+
+#### Step 4 — Visualise the decision regions
+
+The tree splits primarily on `Petal.Length` and `Petal.Width`. Plotting those two dimensions coloured by predicted class makes the decision boundaries intuitive.
+
+```{r classification_regions, fig.height=5, fig.width=7}
+# create a fine grid of petal measurements covering the observed range
+grid <- expand.grid(
+  Petal.Length = seq(min(iris$Petal.Length), max(iris$Petal.Length), length = 200),
+  Petal.Width  = seq(min(iris$Petal.Width),  max(iris$Petal.Width),  length = 200),
+  Sepal.Length = mean(iris$Sepal.Length),   # hold sepal measurements at their mean
+  Sepal.Width  = mean(iris$Sepal.Width)
+)
+
+# predict species for every point on the grid
+grid$Predicted <- predict(iris.ctree, newdata = grid)
+
+# plot the decision regions as a background, then overlay real test observations
+ggplot() +
+  geom_tile(data = grid,
+            aes(x = Petal.Length, y = Petal.Width, fill = Predicted),
+            alpha = 0.3) +
+  geom_point(data = iris.test,
+             aes(x = Petal.Length, y = Petal.Width,
+                 colour = Species, shape = Species),
+             size = 3) +
+  scale_fill_brewer(palette = "Set2")   +
+  scale_colour_brewer(palette = "Dark2") +
+  labs(
+    title    = "Decision regions of the conditional inference tree",
+    subtitle = "Background shading = predicted class; points = true species (test set)",
+    x        = "Petal length (cm)",
+    y        = "Petal width (cm)"
+  ) +
+  theme_minimal()
+```
+
+#### Step 5 — Random forest for comparison
+
+A **random forest** fits many decision trees, each on a random bootstrap sample of the data and a random subset of features, then takes a majority vote. It almost always outperforms a single tree.
+
+```{r classification_rf}
+library(ranger)
+
+# fit a random forest with 500 trees
+rf_fit <- ranger(
+  Species ~ .,
+  data        = iris.train,
+  num.trees   = 500,
+  probability = FALSE,   # classification, not probability estimation
+  seed        = 42
+)
+
+# predict on the test set
+rf_pred     <- predict(rf_fit, data = iris.test)$predictions
+rf_cm       <- table(Actual = iris.test$Species, Predicted = rf_pred)
+rf_accuracy <- sum(diag(rf_cm)) / sum(rf_cm)
+
+cat("Random forest accuracy:              ", round(rf_accuracy, 3), "\n")
+cat("Conditional inference tree accuracy: ", round(accuracy_ctree, 3), "\n")
+```
+
+**Take-away:** The random forest typically achieves higher accuracy on the test set because averaging over many trees reduces variance. On a clean, small dataset like `iris` the difference is small — on noisier, larger data it is usually more substantial.
+
+---
+
+## 3. Clustering with R
+
+### 3.1 What is clustering?
+
+**Clustering** is an **unsupervised** method that groups observations so that members of the same cluster are more similar to each other than to members of other clusters. Unlike classification, there are no pre-existing labels — the algorithm discovers the groupings from the data itself.
+
+Key terms:
+
+| Term | Definition |
+|---|---|
+| **Centroid** | The mean position of all observations in a cluster — the cluster's "centre of gravity" |
+| **Within-cluster SS (WCSS)** | The total squared distance of every observation from its cluster centroid. k-means minimises this. |
+| **K** | The number of clusters, which must be specified before running k-means |
+| **Inertia** | Another name for WCSS — lower inertia means tighter clusters |
+
+### 3.2 R packages for clustering
+
+| Package | Method |
+|---|---|
+| `stats` (base R) | `kmeans()` — k-means, `hclust()` — hierarchical clustering |
+| `cluster` | `pam()` (k-medoids), `agnes()` (agglomerative), `diana()` (divisive) |
+| `fpc` | `dbscan()` — density-based clustering, good for irregular shapes |
+| `NbClust` | 30 indices for determining the optimal number of clusters |
+
+### 3.3 Example: k-means clustering on iris
+
+We remove the species labels, cluster purely on measurements, then compare the recovered clusters to the true species. This demonstrates both the power and the limits of k-means.
+
+```{r clustering_kmeans}
+set.seed(654)
+
+# remove the species label — k-means sees only numeric measurements
+iris2 <- iris %>% dplyr::select(-Species)
+
+# fit k-means with k = 3 (we know there are 3 species, but the algorithm does not)
+# nstart = 25: try 25 random initialisations and keep the best solution
+iris.kmeans <- kmeans(iris2, centers = 3, nstart = 25)
+
+# cluster sizes
+cat("Cluster sizes:", iris.kmeans$size, "\n\n")
+
+# cluster centroids (mean of each variable within each cluster)
+cat("Cluster centroids:\n")
+round(iris.kmeans$centers, 2)
+```
+
+```{r clustering_compare}
+# compare recovered clusters to the true species labels
+# rows = true species, columns = assigned cluster
+cm_clust <- table(True_species = iris$Species, Cluster = iris.kmeans$cluster)
+cm_clust
+
+# how well did k-means recover the true groupings?
+# find the best cluster-to-species assignment and compute overall agreement
+best_match <- apply(cm_clust, 1, max)
+agreement  <- sum(best_match) / nrow(iris)
+cat("\nBest-case cluster-to-species agreement:", round(agreement, 3), "\n")
+cat("(1.0 = perfect recovery; 0.333 = no better than random for 3 equal groups)\n")
+```
+
+**Interpreting the table:** If k-means perfectly recovered the species structure, each row would have a single non-zero entry. The actual table shows that *setosa* is almost always recovered cleanly (its petals are much smaller), while *versicolor* and *virginica* overlap more in measurement space.
+
+```{r clustering_plot, fig.height=5, fig.width=8}
+# plot the clusters with ggplot2, using Sepal.Length vs Sepal.Width
+# (the two features used in the original slides — useful for comparison)
+
+# attach cluster and true species labels for plotting
+iris_plot <- iris %>%
+  mutate(cluster = factor(iris.kmeans$cluster))
+
+# extract centroids for annotation
+centers_df <- as.data.frame(iris.kmeans$centers) %>%
+  mutate(cluster = factor(1:3))
+
+ggplot(iris_plot, aes(x = Sepal.Length, y = Sepal.Width)) +
+  # colour by cluster assignment, shape by true species
+  geom_point(aes(colour = cluster, shape = Species), size = 2.5, alpha = 0.8) +
+  # mark centroids with a large X
+  geom_point(data = centers_df,
+             aes(x = Sepal.Length, y = Sepal.Width, colour = cluster),
+             shape = 4, size = 6, stroke = 2) +
+  scale_colour_brewer(palette = "Dark2", name = "k-means\ncluster") +
+  scale_shape_manual(values = c(16, 17, 15), name = "True\nspecies") +
+  labs(
+    title    = "k-means clustering of iris (k = 3) on sepal dimensions",
+    subtitle = "Colour = k-means cluster; shape = true species; X = cluster centroid",
+    x        = "Sepal length (cm)",
+    y        = "Sepal width (cm)"
+  ) +
+  theme_minimal()
+```
+
+**What the plot reveals:** The cluster boundaries in sepal space are less clean than in petal space. This is a useful reminder that k-means performance depends strongly on which features you include — sepal measurements are less discriminating than petal measurements for these three species.
+
+---
+
+## 4. Association rule mining with R
+
+### 4.1 What is association rule mining?
+
+**Association rule mining** finds frequent patterns, co-occurrences, and correlations in large transactional datasets. Each **transaction** is a set of items (e.g., a shopping basket). A **rule** has the form:
+
+$$\{A, B\} \Rightarrow \{C\}$$
+
+*"Customers who buy A and B also tend to buy C."*
+
+Three metrics determine how interesting a rule is:
+
+| Metric | Formula | Plain-English meaning |
+|---|---|---|
+| **Support** | $\frac{\text{transactions containing } A \cup C}{\text{all transactions}}$ | How common is this combination overall? |
+| **Confidence** | $\frac{\text{transactions containing } A \cup C}{\text{transactions containing } A}$ | Among baskets with A, what fraction also contain C? |
+| **Lift** | $\frac{\text{confidence}(A \Rightarrow C)}{\text{support}(C)}$ | How much more likely is C given A, compared to C alone? |
+
+**Interpreting lift:**
+
+- Lift = 1 → A and C are statistically independent (the rule adds no information)
+- Lift > 1 → A and C co-occur more often than chance (a genuinely interesting rule)
+- Lift < 1 → A and C are negatively associated (buying A makes C less likely)
+
+### 4.2 R packages for association rules
+
+| Package | Purpose |
+|---|---|
+| `arules` | `apriori()`, `eclat()` — mine rules; `inspect()` — display rules |
+| `arulesSequence` | Sequential pattern mining (order of items matters) |
+| `arulesViz` | Network graphs, scatter plots, grouped matrix visualisations of rules |
+
+### 4.3 Example: grocery basket analysis
+
+The `Groceries` dataset in the `arules` package contains 9,835 real grocery transactions. We mine association rules and identify the most interesting ones by lift.
+
+```{r assoc_data}
+data(Groceries)   # load from the arules package
+
+# inspect the dataset structure
+cat("Number of transactions:", length(Groceries), "\n")
+cat("Number of items:       ", nitems(Groceries), "\n\n")
+
+# most frequently purchased items
+itemFrequencyPlot(Groceries,
+                  topN  = 15,
+                  type  = "relative",
+                  col   = "steelblue",
+                  main  = "Top 15 most frequently purchased grocery items",
+                  ylab  = "Item frequency (proportion of transactions)")
+```
+
+```{r assoc_rules}
+# mine association rules using the Apriori algorithm
+# supp = 0.01: rule must appear in at least 1% of transactions
+# conf = 0.40: at least 40% of baskets containing the LHS also contain the RHS
+rules <- apriori(
+  Groceries,
+  parameter = list(supp = 0.01, conf = 0.40, minlen = 2)
+)
+
+cat("Number of rules found:", length(rules), "\n\n")
+
+# display the top 10 rules sorted by lift (most interesting first)
+cat("Top 10 rules by lift:\n")
+arules::inspect(sort(rules, by = "lift")[1:10])
+```
+
+```{r assoc_viz, fig.height=6, fig.width=8}
+# scatter plot: support vs confidence, coloured by lift
+# rules in the top-right with high lift are the most actionable
+top_rules <- sort(rules, by = "lift")[1:50]
+
+plot(top_rules,
+     measure  = c("support", "confidence"),
+     shading  = "lift",
+     main     = "Top 50 association rules: support vs confidence (colour = lift)",
+     col      = colorRampPalette(c("steelblue", "tomato"))(100))
+```
+
+**Reading the scatter plot:** Each point is one rule. Rules to the upper right have both high support (common) and high confidence (reliable). The colour encodes lift — red points are the most interesting because the co-occurrence is far above what random chance would predict.
+
+```{r assoc_network, fig.height=6, fig.width=8}
+# network graph of the top 20 rules by lift
+# nodes = items, edges = rules, edge width ∝ lift
+plot(sort(rules, by = "lift")[1:20],
+     method = "graph",
+     control = list(type = "items"),
+     main   = "Network of top 20 association rules (edge width ∝ lift)")
+```
+
+---
+
+## 5. Text mining with R
+
+### 5.1 What is text mining?
+
+**Text mining** (also called **natural language processing** in machine learning contexts) is the process of extracting structured, quantitative information from unstructured text. Raw text cannot be fed directly into most statistical models — it must first be transformed into a numeric representation.
+
+Key concepts:
+
+| Concept | Definition |
+|---|---|
+| **Corpus** | The full collection of text documents being analysed |
+| **Token** | A unit of text — typically a word, but can be a character, sentence, or n-gram |
+| **Tokenisation** | Splitting a document into individual tokens |
+| **Stop words** | Common words ("the", "and", "a") that carry little meaning and are usually removed |
+| **Stemming / Lemmatisation** | Reducing words to their root form ("running" → "run") to merge related forms |
+| **Bag of words** | Representing each document as a vector of word counts, ignoring word order |
+| **TF-IDF** | Term frequency–inverse document frequency: weights words by how distinctive they are to a specific document |
+
+**TF-IDF formula:**
+
+$$\text{TF-IDF}(t, d) = \underbrace{\frac{\text{count of } t \text{ in } d}{\text{total words in } d}}_{\text{term frequency}} \times \underbrace{\log\left(\frac{\text{total documents}}{\text{documents containing } t}\right)}_{\text{inverse document frequency}}$$
+
+A word common in one document but rare across the corpus gets a high TF-IDF score — it is likely a defining term for that document.
+
+### 5.2 R packages for text mining
+
+| Package | Purpose |
+|---|---|
+| `tm` | Corpus management, cleaning pipeline, `DocumentTermMatrix` |
+| `tidytext` | Tidy interface: `unnest_tokens()`, `bind_tf_idf()`, integrates with `dplyr` |
+| `topicmodels` | Latent Dirichlet Allocation (LDA) topic modelling |
+| `wordcloud` | Word cloud visualisations |
+| `stringr` | String manipulation (part of tidyverse) |
+
+### 5.3 Example: analysing six short documents
+
+We build a small corpus of six documents, clean it, and compute word frequencies and TF-IDF scores using both the `tm` and `tidytext` approaches.
+
+```{r text_corpus}
+# six short documents on different topics
+docs <- c(
+  doc1 = "Statistics is the science of learning from data. Data analysis and probability are central to statistics.",
+  doc2 = "Machine learning algorithms learn patterns from training data to make predictions on new data.",
+  doc3 = "Data science combines statistics, machine learning, and programming to extract insights from large datasets.",
+  doc4 = "R is a statistical programming language widely used for data analysis, visualisation, and machine learning.",
+  doc5 = "Neural networks are a class of machine learning models inspired by the structure of the human brain.",
+  doc6 = "Probability theory provides the mathematical foundation for both statistics and machine learning."
+)
+
+# build a tm Corpus from the character vector
+corpus <- tm::Corpus(VectorSource(docs))
+
+# text cleaning pipeline
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%   # lowercase everything
+  tm_map(removePunctuation)                 %>%   # remove . , ! etc.
+  tm_map(removeNumbers)                     %>%   # remove digits
+  tm_map(removeWords, stopwords("english")) %>%   # remove "the", "and", etc.
+  tm_map(stripWhitespace)                        # collapse multiple spaces
+
+# inspect one cleaned document
+cat("Cleaned document 1:\n", as.character(corpus_clean[[1]]), "\n")
+```
+
+```{r text_dtm}
+# build a Document-Term Matrix (DTM)
+# rows = documents, columns = unique words, cells = word count
+dtm <- DocumentTermMatrix(corpus_clean)
+
+cat("DTM dimensions:", nrow(dtm), "documents ×", ncol(dtm), "terms\n\n")
+
+# find terms appearing in at least 3 documents
+frequent_terms <- findFreqTerms(dtm, lowfreq = 3)
+cat("Terms appearing in ≥ 3 documents:\n")
+print(frequent_terms)
+```
+
+```{r text_wordcloud, fig.height=5, fig.width=6}
+# compute overall word frequencies across all documents
+word_freqs <- colSums(as.matrix(dtm))
+word_freqs <- sort(word_freqs, decreasing = TRUE)
+
+# word cloud: size ∝ frequency
+set.seed(42)
+wordcloud::wordcloud(
+  words     = names(word_freqs),
+  freq      = word_freqs,
+  min.freq  = 1,
+  max.words = 40,
+  colors    = RColorBrewer::brewer.pal(8, "Dark2"),
+  scale     = c(3, 0.5)
+)
+title("Word cloud: six data science documents")
+```
+
+```{r text_tfidf}
+# TF-IDF using tidytext — integrates naturally with dplyr
+library(tidytext)
+
+# create a tidy data frame: one row per word per document
+tidy_docs <- tibble(
+  document = names(docs),
+  text     = unname(docs)
+) %>%
+  unnest_tokens(word, text) %>%              # tokenise
+  anti_join(stop_words, by = "word") %>%    # remove stop words
+  count(document, word, sort = TRUE)        # count word occurrences
+
+# compute TF-IDF scores
+tidy_tfidf <- tidy_docs %>%
+  bind_tf_idf(word, document, n)
+
+# top 3 most distinctive words per document
+tidy_tfidf %>%
+  group_by(document) %>%
+  slice_max(tf_idf, n = 3, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(document, desc(tf_idf)) %>%
+  dplyr::select(document, word, tf_idf) %>%
+  mutate(tf_idf = round(tf_idf, 4))
+```
+
+**Interpreting TF-IDF:** Words like "statistics" score high in documents that use the word a lot (doc1, doc3, doc6) but not in others. Generic words like "data" appear everywhere and therefore have a lower IDF component — they do not distinguish one document from another.
+
+---
+
+## 6. Time series analysis with R
+
+### 6.1 What is time series analysis?
+
+A **time series** is a sequence of observations recorded at regular time intervals — hourly temperatures, monthly sales, annual GDP. Time series data violate the standard statistical assumption that observations are independent: values close in time tend to be similar.
+
+Key concepts:
+
+| Concept | Definition |
+|---|---|
+| **Trend** | A long-run increase or decrease in the level of the series |
+| **Seasonality** | A repeating pattern at a fixed, known period (monthly, quarterly, annual) |
+| **Residual / noise** | The remaining variation after trend and seasonality are removed |
+| **Stationarity** | A series whose statistical properties (mean, variance) do not change over time. Required by many models. |
+| **ARIMA** | AutoRegressive Integrated Moving Average — a flexible class of models for stationary time series |
+| **Decomposition** | Separating a series into trend + seasonal + residual components |
+
+### 6.2 R packages for time series
+
+| Package | Function |
+|---|---|
+| `stats` (base R) | `decompose()`, `stl()` — additive/multiplicative decomposition; `arima()` — manual ARIMA |
+| `forecast` | `auto.arima()` — automatic model selection; `forecast()` — generate predictions; `autoplot()` — ggplot2-compatible plots |
+| `TSclust` | Time series clustering |
+| `dtw` | Dynamic time warping — comparing series of different lengths or phases |
+
+### 6.3 Example: airline passenger data
+
+`AirPassengers` is a classic built-in R dataset: monthly totals of international airline passengers from 1949 to 1960 (in thousands). It is an ideal illustration because it has a clear upward trend and strong annual seasonality.
+
+```{r ts_plot, fig.height=4, fig.width=8}
+# AirPassengers is built into base R — no download needed
+data(AirPassengers)
+
+# basic plot of the raw series
+autoplot(AirPassengers) +
+  labs(
+    title = "Monthly international airline passengers (1949–1960)",
+    x     = "Year",
+    y     = "Passengers (thousands)"
+  ) +
+  theme_minimal()
+```
+
+```{r ts_decompose, fig.height=6, fig.width=8}
+# decompose into trend + seasonal + residual components
+# multiplicative: seasonal variation grows with the level (appropriate here)
+decomp <-  stats::decompose(AirPassengers, type = "multiplicative")
+
+autoplot(decomp) +
+  labs(title = "Multiplicative decomposition of AirPassengers") +
+  theme_minimal()
+```
+
+**Reading the decomposition:**
+
+- **Observed**: the raw series — clear upward trend and growing seasonal swings.
+- **Trend**: the smoothed long-run growth, extracted by a moving average.
+- **Seasonal**: the repeating annual pattern — a peak in summer, a trough in winter.
+- **Random (residual)**: what remains after removing trend and seasonality. A well-specified model leaves mostly white noise here.
+
+```{r ts_forecast, fig.height=5, fig.width=9}
+# fit an ARIMA model automatically (auto.arima selects the best order)
+# log transform: stabilises the variance (seasonal swings grow with level)
+fit <- auto.arima(log(AirPassengers))
+
+cat("Fitted model:\n")
+print(fit)
+
+# generate a 24-month (2-year) forecast with 80% and 95% prediction intervals
+fc <- forecast(fit, h = 24)
+
+# back-transform from log scale for the plot
+autoplot(fc) +
+  labs(
+    title    = "24-month forecast for airline passengers (ARIMA on log scale)",
+    subtitle = "Shaded bands = 80% and 95% prediction intervals",
+    x        = "Year",
+    y        = "log(Passengers)"
+  ) +
+  theme_minimal()
+```
+
+**Key points:** The model captures both trend (upward) and seasonality (annual cycle). The prediction intervals widen into the future — uncertainty grows the further ahead we forecast. This is an honest representation of what we can and cannot know from the data.
+
+---
+
+## 7. Social network analysis with R
+
+### 7.1 What is social network analysis?
+
+A **network** (or **graph**) consists of **nodes** (entities — people, genes, webpages) connected by **edges** (relationships — friendships, interactions, hyperlinks). Social network analysis (SNA) quantifies the structure of these relationships.
+
+Key terms:
+
+| Term | Definition |
+|---|---|
+| **Node / vertex** | An entity in the network |
+| **Edge** | A relationship between two nodes. Can be directed (A → B) or undirected (A — B) |
+| **Degree** | The number of edges connected to a node — a measure of local connectivity |
+| **Betweenness centrality** | How often a node lies on the shortest path between other nodes. High betweenness = information broker. |
+| **Closeness centrality** | The inverse of the average distance from a node to all others. High closeness = can reach others quickly. |
+| **Transitivity** | The proportion of connected triples that form triangles (also called clustering coefficient) |
+| **Community** | A subset of nodes that are more densely connected internally than to the rest of the network |
+
+### 7.2 R packages for network analysis
+
+| Package | Purpose |
+|---|---|
+| `igraph` | Core graph analysis: construction, centrality, clustering, visualisation |
+| `sna` | Sociometric analysis; integrates with `network` objects |
+| `ggraph` | `ggplot2`-based network visualisation |
+| `tidygraph` | Tidy interface to graph data using `dplyr` verbs |
+
+### 7.3 Example: the Zachary karate club network
+
+Wayne Zachary's 1977 study is a canonical social network dataset. It records friendships between 34 members of a university karate club before the club split into two factions following a dispute between the instructor and the administrator. The network is built into `igraph`.
+
+```{r sna_data}
+# load the karate club network (built into igraph — no download needed)
+karate <- igraph::make_graph("Zachary")
+
+cat("Number of nodes (members):", vcount(karate), "\n")
+cat("Number of edges (friendships):", ecount(karate), "\n")
+cat("Network density:", round(edge_density(karate), 3),
+    "(fraction of all possible edges that exist)\n")
+cat("Average path length:", round(mean_distance(karate), 2), "\n")
+cat("Transitivity (clustering coefficient):", round(transitivity(karate), 3), "\n")
+```
+
+```{r sna_centrality}
+# compute centrality measures for each node
+deg        <- degree(karate)            # degree centrality
+between    <- betweenness(karate)       # betweenness centrality
+close      <- closeness(karate)         # closeness centrality
+
+# summarise top 5 nodes by betweenness (information brokers)
+centrality_df <- tibble(
+  node        = 1:vcount(karate),
+  degree      = deg,
+  betweenness = round(between, 1),
+  closeness   = round(close, 4)
+) %>%
+  arrange(desc(betweenness))
+
+cat("Top 5 nodes by betweenness centrality:\n")
+print(head(centrality_df, 5))
+```
+
+```{r sna_communities}
+# detect communities using the Walktrap algorithm
+# (random walks tend to stay within communities)
+communities <- cluster_walktrap(karate)
+
+cat("Number of communities detected:", length(communities), "\n")
+cat("Modularity score:", round(modularity(communities), 3),
+    "(higher = more defined community structure)\n\n")
+cat("Community membership:\n")
+print(membership(communities))
+```
+
+```{r sna_plot, fig.height=7, fig.width=8}
+# set node attributes for visualisation
+V(karate)$community <- membership(communities)
+V(karate)$degree    <- degree(karate)
+
+# colour palette for communities
+community_colours <- RColorBrewer::brewer.pal(
+  max(V(karate)$community), "Set2"
+)[V(karate)$community]
+
+# plot the network
+# node size ∝ degree; colour encodes community
+set.seed(42)
+plot(
+  karate,
+  vertex.color       = community_colours,
+  vertex.size        = V(karate)$degree * 1.5,  # size ∝ degree
+  vertex.label.cex   = 0.8,
+  vertex.label.color = "black",
+  edge.color         = "grey70",
+  edge.width         = 0.8,
+  layout             = layout_with_fr(karate),   # Fruchterman-Reingold layout
+  main               = "Zachary karate club network\n(colour = community, size ∝ degree)"
+)
+legend("bottomleft",
+       legend = paste("Community", 1:max(V(karate)$community)),
+       fill   = RColorBrewer::brewer.pal(max(V(karate)$community), "Set2"),
+       bty    = "n", cex = 0.8)
+```
+
+**What the network reveals:** Nodes 1 (instructor) and 34 (administrator) are the largest (highest degree) and sit at the boundary between the two main communities — they are the central figures around whom the club eventually split. Betweenness centrality identifies the nodes that serve as bridges between otherwise weakly connected parts of the network.
+
+---
+
+## 8. R and big data
+
+### 8.1 When does "big data" become a problem?
+
+Standard R loads all data into RAM. This works well for datasets up to a few hundred megabytes. Problems arise when:
+
+- **Volume**: the dataset is too large to fit in memory (gigabytes or terabytes)
+- **Velocity**: data arrives faster than a single machine can process it (streaming logs, sensor feeds)
+- **Variety**: data comes in many formats — structured tables, JSON, images, text — often from multiple sources
+
+These are the classic "3 Vs" of big data. Different tools address different Vs.
+
+### 8.2 Current R big data ecosystem
+
+| Tool | What it does | R interface |
+|---|---|---|
+| **Apache Spark** | Distributed computation across a cluster — handles Vs of volume and velocity | `sparklyr` (recommended), `SparkR` |
+| **Apache Arrow** | In-memory columnar format; reads Parquet files and connects to cloud storage at high speed | `arrow` package |
+| **DuckDB** | In-process analytical SQL database; handles files larger than RAM with minimal setup | `duckdb` package |
+| **H2O** | In-memory distributed machine learning; scales to datasets too large for `caret` or `tidymodels` | `h2o` package |
+| **MongoDB** | Document database (JSON-like records); good for unstructured or semi-structured data | `mongolite` package |
+
+> **Note on deprecated packages:** Earlier versions of this course referenced `RHadoop`, `RHIPE`, `rmongodb`, and `RMongo`. These packages are no longer maintained and are not available on current CRAN. Use `sparklyr` for Hadoop/Spark integration and `mongolite` for MongoDB.
+
+### 8.3 A practical decision guide
+
+```
+Is your data larger than available RAM?
+├─ No  → Use tidyverse / tidymodels as normal.
+└─ Yes → Does it fit on a single machine's disk?
+         ├─ Yes → Use arrow (Parquet) or duckdb (SQL on files).
+         └─ No  → Use sparklyr to distribute across a cluster.
+
+Do you need machine learning at scale?
+└─ Yes → Consider h2o (single machine, distributed RAM)
+          or sparklyr with MLlib (cluster-scale).
+
+Is your data in a document / NoSQL store?
+└─ Yes → Use mongolite to read from MongoDB into R data frames.
+```
+
+### 8.4 A minimal `arrow` example
+
+`arrow` is the easiest entry point for large-file work because it requires no server setup — it reads Parquet files directly from disk or cloud storage.
+
+```{r bigdata_arrow, eval=FALSE}
+# This chunk shows the pattern — not run because it requires a Parquet file.
+# install.packages("arrow")
+library(arrow)
+
+# read a large Parquet file directly into R (lazy — only loads what you need)
+ds <- open_dataset("path/to/large_file.parquet")
+
+# use dplyr verbs before collecting into memory
+result <- ds %>%
+  filter(year == 2023) %>%
+  group_by(region) %>%
+  summarise(avg_sales = mean(sales, na.rm = TRUE)) %>%
+  collect()   # <-- only now does data come into R memory
+```
+
+---
+
+## 9. Exercises
+
+---
+
+### Exercise 1 — Extend the classification analysis
+
+Using the iris classification example from Section 2:
+
+**(a)** Fit a standard CART decision tree using `rpart::rpart()` with the same formula and training data. Plot the tree using `rpart.plot::rpart.plot()` (install if needed) and compare its structure to the `ctree` tree.
+
+**(b)** Compute the test-set accuracy of the `rpart` tree. Which of the three classifiers — `ctree`, random forest, or `rpart` — performs best on the test set?
+
+**(c)** Change `set.seed(465)` to `set.seed(99)` and re-run the split and all three classifiers. Do the rankings change? What does this tell you about evaluating classifiers on a single train/test split?
+
+*Hint: For part (a), use `pred_rpart <- predict(rpart_fit, newdata = iris.test, type = "class")`. For part (c), consider how small test sets lead to high variance in accuracy estimates.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex1_solution, eval=TRUE}
+library(rpart)
+
+# Part (a): fit CART decision tree
+rpart_fit <- rpart(
+  Species ~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width,
+  data   = iris.train,
+  method = "class"
+)
+
+# install.packages("rpart.plot")
+# rpart.plot::rpart.plot(rpart_fit, main = "CART decision tree for iris species")
+
+# Part (b): test-set accuracy for rpart
+pred_rpart     <- predict(rpart_fit, newdata = iris.test, type = "class")
+cm_rpart       <- table(Actual = iris.test$Species, Predicted = pred_rpart)
+accuracy_rpart <- sum(diag(cm_rpart)) / sum(cm_rpart)
+
+cat("--- Test-set accuracy comparison ---\n")
+cat("rpart CART tree:             ", round(accuracy_rpart, 3), "\n")
+cat("partykit ctree:              ", round(accuracy_ctree,  3), "\n")
+cat("ranger random forest:        ", round(rf_accuracy,    3), "\n")
+```
+
+**Interpretation for part (a):** The `rpart` CART tree chooses splits using the Gini impurity criterion, which tends to prefer variables with many possible split points. The `ctree` uses statistical testing, which is more conservative — it may produce a simpler tree. Both should achieve similar accuracy on clean data like `iris`.
+
+**Interpretation for part (b):** On `iris`, the random forest typically achieves the highest accuracy (often 95–100%) because averaging over 500 trees reduces the variance of individual splits. The two single-tree methods are more variable.
+
+**Interpretation for part (c):** On a small test set (roughly 45 observations), a single misclassification changes accuracy by ~2 percentage points. Running with `set.seed(99)` will produce a different split, and the rankings may well change. This illustrates why k-fold cross-validation is preferred over a single split for small datasets — it averages performance across multiple held-out folds and gives a more stable estimate.
+
+</details>
+
+---
+
+### Exercise 2 — Choosing K in k-means clustering
+
+The k-means example in Section 3 used K = 3 because we knew the true number of species. In real data, we do not know K in advance.
+
+**(a)** Apply the **elbow method**: compute WCSS (total within-cluster sum of squares) for K = 1 to 10 on the iris data (without the species column). Plot WCSS against K and identify the "elbow" — the point where adding more clusters gives diminishing returns.
+
+**(b)** What value of K does the elbow suggest? Does it agree with the true number of species?
+
+**(c)** Re-run k-means with your chosen K and compare the resulting clusters to the true species using a table. How does agreement change compared to K = 3?
+
+*Hint: Use `sapply(1:10, function(k) kmeans(iris2, centers = k, nstart = 25)$tot.withinss)` to compute WCSS for each K.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex2_solution, eval=TRUE, fig.height=4, fig.width=6}
+set.seed(42)
+iris2_ex <- iris %>% dplyr::select(-Species)
+
+# Part (a): compute WCSS for K = 1 to 10
+wcss <- sapply(1:10, function(k) {
+  kmeans(iris2_ex, centers = k, nstart = 25)$tot.withinss
+})
+
+# elbow plot
+tibble(K = 1:10, WCSS = wcss) %>%
+  ggplot(aes(x = K, y = WCSS)) +
+  geom_line(colour = "steelblue") +
+  geom_point(size = 3, colour = "steelblue") +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title    = "Elbow method: within-cluster SS vs. number of clusters (iris)",
+    x        = "Number of clusters K",
+    y        = "Total within-cluster SS"
+  ) +
+  theme_minimal()
+```
+
+**Part (b):** The elbow is typically visible at K = 3, which agrees with the true number of species. The curve drops steeply from K = 1 to K = 3, then flattens. This is a favourable case — `iris` has well-separated clusters. In real data the elbow is often less obvious, and analysts use multiple indices (silhouette score, gap statistic, NbClust) for confirmation.
+
+```{r ex2_solution_k3, eval=TRUE}
+# Part (c): K = 3 is the elbow — compare to true labels
+set.seed(42)
+km3 <- kmeans(iris2_ex, centers = 3, nstart = 25)
+table(True_species = iris$Species, Cluster = km3$cluster)
+```
+
+With K = 3 and a different random seed, the cluster numbering may differ from the main example (cluster 1 in one run may correspond to cluster 3 in another — k-means labels are arbitrary). The pattern of which species overlap which clusters should be similar.
+
+</details>
+
+---
+
+### Exercise 3 — Association rules: interpreting metrics
+
+Using the rules mined from the `Groceries` dataset in Section 4:
+
+**(a)** Find all rules where `whole milk` appears on the **right-hand side** (i.e., rules that predict whole milk purchases). How many such rules are there?
+
+**(b)** Among those rules, which has the highest **confidence**? Write out the rule in plain English and explain what the confidence value means for a grocery store manager.
+
+**(c)** A colleague claims "high lift always means a rule is useful for a business decision." Do you agree? Describe a scenario where a high-lift rule is not actionable.
+
+*Hint: Use `subset(rules, rhs %in% "whole milk")` to filter rules by right-hand side item.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex3_solution, eval=TRUE}
+# Part (a): rules with whole milk on the right-hand side
+milk_rules <- subset(rules, rhs %in% "whole milk")
+cat("Number of rules predicting 'whole milk':", length(milk_rules), "\n\n")
+
+# Part (b): rule with highest confidence
+cat("Top 5 whole-milk rules by confidence:\n")
+arules::inspect(sort(milk_rules, by = "confidence")[1:5])
+```
+
+**Part (b) interpretation:** The rule with the highest confidence might read something like `{other vegetables, butter} → {whole milk}` with confidence 0.57. This means: of all transactions containing both other vegetables and butter, 57% also contained whole milk. For a store manager this suggests placing whole milk near the butter section, or creating a promotional bundle.
+
+**Part (c):** High lift does not always mean actionable. Consider the rule `{baby food} → {diapers}` — lift may be very high (parents who buy baby food almost always buy diapers) but this rule adds little value to a manager because both items are already shelved together in the baby aisle and the association is entirely expected. Useful rules have high lift *and* high support *and* describe a non-obvious connection that suggests a concrete action (cross-sell, store layout change, promotion).
+
+</details>
+
+---
+
+### Exercise 4 — Time series: decomposition and forecasting
+
+The `nottem` dataset (built into R) contains monthly average temperatures at Nottingham Castle from 1920 to 1939.
+
+**(a)** Plot the raw series. Describe the trend and seasonal pattern you observe.
+
+**(b)** Decompose the series using `decompose(nottem, type = "additive")` and plot the result. Why is additive more appropriate here than multiplicative?
+
+**(c)** Fit an ARIMA model using `auto.arima()` and produce a 36-month (3-year) forecast. Plot the forecast with prediction intervals. What is the model selected?
+
+*Hint: Use `autoplot()` from the `forecast` package for all plots.*
+
+<details>
+<summary><strong>Solution — click to expand</strong></summary>
+
+```{r ex4_solution, eval=TRUE, fig.height=4, fig.width=8}
+data(nottem)
+
+# Part (a): plot raw series
+autoplot(nottem) +
+  labs(title = "Monthly average temperature — Nottingham Castle (1920–1939)",
+       x = "Year", y = "Temperature (°F)") +
+  theme_minimal()
+```
+
+**Part (a):** The series shows strong seasonal variation (cold winters, warm summers) repeating every 12 months. There is no obvious long-run trend — the level appears roughly constant across the 20-year period.
+
+```{r ex4_decompose, eval=TRUE, fig.height=6, fig.width=8}
+# Part (b): additive decomposition
+decomp_nottem <- stats::decompose(nottem, type = "additive")
+autoplot(decomp_nottem) +
+  labs(title = "Additive decomposition — Nottingham temperatures") +
+  theme_minimal()
+```
+
+**Part (b):** Additive decomposition is appropriate because the **amplitude of the seasonal swing stays roughly constant** across the series — summer temperatures are always about 30°F warmer than winter temperatures, regardless of the overall level. A multiplicative model would be appropriate if the seasonal variation grew proportionally with the level (as in the airline passengers example, where traffic levels rose substantially over the period).
+
+```{r ex4_forecast, eval=TRUE, fig.height=5, fig.width=8}
+# Part (c): ARIMA model and forecast
+fit_nottem <- auto.arima(nottem)
+cat("Selected model:", capture.output(fit_nottem)[1], "\n")
+
+fc_nottem <- forecast(fit_nottem, h = 36)
+autoplot(fc_nottem) +
+  labs(title    = "36-month forecast — Nottingham temperatures (ARIMA)",
+       subtitle = "Shaded bands = 80% and 95% prediction intervals",
+       x = "Year", y = "Temperature (°F)") +
+  theme_minimal()
+```
+
+**Part (c):** `auto.arima()` typically selects a seasonal ARIMA model such as ARIMA(2,0,0)(1,1,0)[12], reflecting the strong annual seasonality (period = 12 months). Because the series is stationary in the mean, the forecast stays near the historical average with the familiar seasonal cycle. The prediction intervals widen over the 3-year horizon, reflecting growing uncertainty.
+
+</details>
+
+---
+
+## Online references and further reading
+
+### Statistical data mining — overview
+
+- **R Data Mining** — tutorials, examples, and resources for data mining with R
+  [http://www.rdatamining.com](http://www.rdatamining.com)
+
+- **Introduction to Statistical Learning with R (2e)** — James, Witten, Hastie & Tibshirani *(free PDF)*
+  [https://www.statlearning.com](https://www.statlearning.com)
+  Chapters 8 (trees), 10 (unsupervised learning), and 12 (clustering) are directly relevant.
+
+- **The Elements of Statistical Learning** — Hastie, Tibshirani & Friedman *(free PDF)*
+  [https://hastie.su.domains/ElemStatLearn/](https://hastie.su.domains/ElemStatLearn/)
+  The advanced companion to ISLR. Chapters 9 and 14 cover classification and association rules in depth.
+
+### Classification and decision trees
+
+- **`partykit` package vignette** — conditional inference trees and forests
+  [https://cran.r-project.org/web/packages/partykit/vignettes/partykit.pdf](https://cran.r-project.org/web/packages/partykit/vignettes/partykit.pdf)
+
+- **`ranger` package documentation** — fast random forests
+  [https://cran.r-project.org/package=ranger](https://cran.r-project.org/package=ranger)
+
+### Clustering
+
+- **`cluster` package documentation**
+  [https://cran.r-project.org/package=cluster](https://cran.r-project.org/package=cluster)
+
+### Association rules
+
+- **Introduction to `arules`** — Hahsler, Grün & Hornik
+  [https://cran.r-project.org/web/packages/arules/vignettes/arules.pdf](https://cran.r-project.org/web/packages/arules/vignettes/arules.pdf)
+
+### Text mining
+
+- **Text Mining with R: A Tidy Approach** — Silge & Robinson *(free online)*
+  [https://www.tidytextmining.com](https://www.tidytextmining.com)
+  The definitive guide to the `tidytext` workflow. Covers tf-idf, topic modelling, and sentiment analysis.
+
+### Time series
+
+- **Forecasting: Principles and Practice (3e)** — Hyndman & Athanasopoulos *(free online)*
+  [https://otexts.com/fpp3/](https://otexts.com/fpp3/)
+  The authoritative reference for the `forecast` package and modern time series analysis in R.
+
+### Social network analysis
+
+- **`igraph` R package documentation**
+  [https://igraph.org/r/](https://igraph.org/r/)
+
+- **Network Science** — Barabási *(free online)*
+  [http://networksciencebook.com](http://networksciencebook.com)
+  Intuitive introduction to network theory with real-world examples.
+
+### Big data with R
+
+- **`sparklyr` documentation** — R interface to Apache Spark
+  [https://spark.rstudio.com](https://spark.rstudio.com)
+
+- **`arrow` R package documentation**
+  [https://arrow.apache.org/docs/r/](https://arrow.apache.org/docs/r/)
+
+- **`duckdb` R package documentation**
+  [https://duckdb.org/docs/api/r.html](https://duckdb.org/docs/api/r.html)
+
+---
+
+## Glossary
+
+**Accuracy:** The proportion of all test observations that were classified correctly: (TP + TN) / Total.
+
+**ARIMA:** AutoRegressive Integrated Moving Average. A class of time series models that combine autoregression (current value depends on past values), differencing (to achieve stationarity), and moving averages (current value depends on past forecast errors).
+
+**Association rule:** An if-then statement of the form {A} → {B} expressing that items A and B co-occur frequently in transactions.
+
+**Bag of words:** A document representation that records only word counts, ignoring word order. Forms the basis of many text classification and clustering methods.
+
+**Betweenness centrality:** A node-level measure of how often a node lies on the shortest path between other node pairs. High betweenness = an information broker or bridge in the network.
+
+**Centroid:** The mean position of all observations assigned to a cluster — the cluster's centre of gravity. k-means relocates centroids iteratively until assignments stabilise.
+
+**Closeness centrality:** The inverse of the average shortest path distance from a node to all other nodes. High closeness = can spread information quickly to the whole network.
+
+**Community (network):** A subset of nodes with denser internal connections than connections to the rest of the graph — a functional subgroup within a network.
+
+**Confidence (association rules):** The proportion of transactions containing the left-hand side (LHS) that also contain the right-hand side (RHS). Measures the reliability of a rule.
+
+**Confusion matrix:** A table comparing actual class labels to predicted labels, showing true positives, true negatives, false positives, and false negatives.
+
+**Corpus:** In text mining, the full collection of text documents being analysed.
+
+**Decision tree:** A classification or regression model that makes predictions by applying a sequence of binary split rules, forming a tree structure.
+
+**Decomposition (time series):** Separating a time series into trend, seasonal, and residual components, each of which can then be analysed or modelled separately.
+
+**Degree (network):** The number of edges connected to a node. In a directed network, in-degree and out-degree are counted separately.
+
+**Edge:** A connection between two nodes in a network. Can be directed (with a source and target) or undirected.
+
+**k-means:** A clustering algorithm that partitions observations into K groups by iteratively assigning each observation to its nearest centroid and then recomputing centroids.
+
+**Lift (association rules):** The ratio of the observed co-occurrence frequency of two items to what would be expected if they were statistically independent. Lift > 1 indicates a genuine positive association.
+
+**Node (vertex):** A fundamental unit of a network — an entity such as a person, webpage, or gene.
+
+**Random forest:** An ensemble learning method that fits many decision trees, each on a random bootstrap sample with a random feature subset, and combines predictions by majority vote (classification) or averaging (regression).
+
+**Seasonality:** A repeating pattern in a time series at a fixed, known period (e.g., annual, quarterly, monthly).
+
+**Stationarity:** A property of a time series whose statistical characteristics — mean, variance, autocorrelation — do not change over time. Required by many time series models.
+
+**Stop words:** High-frequency words ("the", "is", "and") that carry little semantic meaning and are typically removed early in a text mining pipeline.
+
+**Support (association rules):** The proportion of all transactions that contain a specific itemset. Measures how common an itemset or rule is.
+
+**TF-IDF:** Term Frequency–Inverse Document Frequency. A word-weighting scheme that gives high weight to words that are frequent in one document but rare across the corpus — identifying a document's distinctive vocabulary.
+
+**Tokenisation:** Splitting a text document into individual units (tokens), typically words, for further analysis.
+
+**Transitivity (clustering coefficient):** In a network, the proportion of connected triples that close into triangles. High transitivity suggests the network has dense local groupings.
+
+**WCSS (within-cluster sum of squares):** The total squared distance of every observation from the centroid of its assigned cluster. k-means minimises WCSS. Also called inertia.
