@@ -1,0 +1,640 @@
+---
+title: "STAT270 - Final Project"
+subtitle: "Student Submission"
+author: "Brittany Smith"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+------------------------------------------------------------------------
+
+## Instructions
+
+Complete **Task 1** (required, 60 pts) **and one** of Task 2 **or** Task 3 (**your choice**, 40 pts each).
+
+| Task | Points | Topic |
+|------------------------|------------------------|------------------------|
+| Task 1 | 60 pts | Supervised classification (k-NN, Naive Bayes, Logistic Regression) |
+| Task 2 | 40 pts | Hierarchical clustering — vehicle fuel economy |
+| Task 3 | 40 pts | K-means clustering — geospatial world cities |
+
+**Extra Credit (5 pts):** If your `.Rmd` file knits successfully without errors, you will receive 5 bonus points. Make sure all your code runs from top to bottom before submitting.
+
+> **Submission:** Upload this `.Rmd` file and the knitted `.html` file to the course portal by the deadline.
+
+------------------------------------------------------------------------
+
+## Setup
+
+Install any packages listed below that you do not already have using `install.packages("package_name")` in the Console before knitting.
+
+```{r packages}
+# --- Core data wrangling and visualisation ---
+library(tidyverse)    # dplyr, ggplot2, tidyr, purrr, etc.
+
+# --- Modelling framework ---
+library(tidymodels)   # unified interface: recipes, workflows, yardstick
+
+# --- Classification engines ---
+library(discrim)      # naive_Bayes() classifier
+library(klaR)         # engine underlying discrim's Naive Bayes
+library(kknn)         # engine for k-nearest neighbours
+
+# --- Clustering and spatial ---
+library(mclust)       # k-means support functions
+library(ape)          # phylogenetic tree plots for dendrograms
+library(sp)           # spatial objects and coordinate transforms
+library(sf)           # modern simple features spatial data
+
+# --- Data and utilities ---
+library(mdsr)         # course datasets, including world_cities
+library(readxl)       # read Excel (.xlsx) files
+library(janitor)      # clean_names() for tidy column names
+library(broom)        # tidy() for model coefficient summaries
+```
+
+------------------------------------------------------------------------
+
+## Task 1 (Total 60 pts): Supervised classification — high-earners in the 1994 US Census {#task1}
+
+A marketing analyst might be interested in finding factors that can be used to predict whether a potential customer is a high-earner. The 1994 United States Census provides information that can inform such a model, with records from `32,561` adults that include a binary variable indicating whether each person makes greater or less than `$50,000` (more than `$80,000` today after accounting for inflation). This is our response variable.
+
+### Data preparation {#task1-data}
+
+The code below loads and prepares the data. **Run it as-is** — you do not need to modify it.
+
+**Note**: If the data is not accessible via the url address, load via downloading it from the RData file provided in the project page: `load("census.RData")` in the same folder where you saved the project template .Rmd. The line is commented line 96 in the code chunk below. You can uncomment it if you have the RData file.
+
+```{r task1_prepare_data}
+# url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+# 
+# census <- read_csv(
+#   url,
+#   col_names = c(
+#     "age", "workclass", "fnlwgt", "education",
+#     "education_1", "marital_status", "occupation", "relationship",
+#     "race", "sex", "capital_gain", "capital_loss", "hours_per_week",
+#     "native_country", "income"
+#   )
+# ) %>%
+#   mutate(
+#     income     = factor(income),
+#     # income_ind: binary indicator — 1 = high earner (>50K), 0 = low earner
+#     income_ind = as.numeric(income == ">50K")
+#   )
+
+
+load("census.RData") # load the data if you have saved it in RData format
+
+# inspect variable names, types, and first few values
+glimpse(census)
+```
+
+------------------------------------------------------------------------
+
+### Part a) (10 pts) — Train / test split {#task1a}
+
+Split the dataset into two pieces at random:
+
+-   **70%** of the rows → `train` (training set)
+-   **30%** of the rows → `test` (testing / hold-out set)
+
+Use `set.seed(364)` to ensure your results are reproducible.
+
+**Report:** How many records are in the testing set? ***9789***
+
+**Hint:** Use `initial_split(prop = 0.7)`, then extract with `training()` and `testing()`.
+
+```{r task1a_split}
+set.seed(364)
+
+# YOUR CODE HERE
+census_parts <- census %>% initial_split(prop = 0.7)
+train <- training(census_parts)
+test  <- testing(census_parts)
+
+# print the number of rows in the test set
+nrow(test)
+```
+
+**Note:** Around 24% of those in the sample make more than `$50k`. This means the *null model* — always predicting ≤\$50k — achieves about 76% accuracy. Your models should beat this baseline.
+
+The code below computes and prints the proportion of high earners in the training set. Run it after creating `train`.
+
+```{r task1a_null_model}
+
+# compute the proportion of high earners in the training set
+pi_bar <- mean(train$income == ">50K")
+print(c("Proportion earning >$50K in training set:", round(pi_bar, 4)))
+
+```
+
+```         
+```
+
+**Pro Tip:** Always benchmark your predictive models against a reasonable null model.
+
+------------------------------------------------------------------------
+
+### Part b) (10 pts) — k-Nearest Neighbours classifier {#task1b}
+
+Use the k-NN algorithm to classify observations as low earner (`<=50K`) or high earner (`>50K`).
+
+Requirements:
+
+-   Select only the **quantitative** predictors: `age`, `education_1`, `capital_gain`, `capital_loss`, `hours_per_week` (k-NN requires numeric inputs).
+-   Use `mode = "classification"` and `neighbors = 1`.
+-   Set `scale = TRUE` so that no single variable dominates due to its units.
+-   Print the **confusion matrix** and report the **accuracy**.
+
+**Hint:** See Programming Exercises Week 13 for the `nearest_neighbor()` / `kknn` workflow.
+
+```{r task1b_knn_model}
+# select numeric predictors only (drop fnlwgt — it is a sampling weight, not a predictor)
+train_q <- train %>%
+  dplyr::select(income, age, education_1, capital_gain, capital_loss, hours_per_week)
+
+# YOUR CODE HERE
+test_q <- test %>%
+  dplyr::select(income, age, education_1, capital_gain, capital_loss, hours_per_week)
+
+# Recipe: scale/center numeric predictors (kNN needs this)
+knn_rec <- recipe(income ~ ., data = train_q) %>%
+  step_normalize(all_predictors())
+
+# 1-NN classifier, scaled (engine option scale=TRUE is fine, but step_normalize already handles it)
+knn_spec <- nearest_neighbor(neighbors = 1) %>%
+  set_mode("classification") %>%
+  set_engine("kknn")
+
+knn_wf <- workflow() %>%
+  add_recipe(knn_rec) %>%
+  add_model(knn_spec)
+
+# Fit
+knn_fit <- fit(knn_wf, data = train_q)
+
+# Predict classes on test
+pred <- predict(knn_fit, new_data = test_q, type = "class")
+
+
+```
+
+```{r task1b_knn_accuracy}
+# YOUR CODE HERE — report accuracy
+# Confusion matrix + accuracy
+results <- test_q %>%
+  transmute(truth = income) %>%
+  bind_cols(pred) %>%
+  rename(estimate = .pred_class)
+
+conf_mat(results, truth = truth, estimate = estimate)
+
+accuracy(results, truth = truth, estimate = estimate)
+```
+
+------------------------------------------------------------------------
+
+### Model formula (shared across parts c and d) {#task1-formula}
+
+The following formula object is provided for you. It will be used in parts c) and d). Run this chunk as-is.
+
+```{r task1_model_form}
+# reusable formula — includes all categorical and numeric predictors
+form <- as.formula(
+  "income ~ age + workclass + education + marital_status +
+   occupation + relationship + race + sex +
+   capital_gain + capital_loss + hours_per_week"
+)
+
+form
+```
+
+------------------------------------------------------------------------
+
+### Part c) (10 pts) — Naive Bayes classifier {#task1c}
+
+Build a Naive Bayes classifier using the formula object `form` defined above. Print the **confusion matrix** and report the **accuracy** on the training set.
+
+**Hint:** See Programming Exercises Week 13 for the `naive_Bayes()` / `klaR` workflow.
+
+```{r task1c_naive_bayes, warning=FALSE}
+# YOUR CODE HERE
+# make sure outcome is a factor (classification)
+train <- train %>% mutate(income = factor(income))
+
+nb_spec <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("klaR")
+
+nb_fit <- fit(nb_spec, form, data = train)
+
+# class predictions on TRAINING set
+pred_train <- predict(nb_fit, new_data = train, type = "class")
+
+train_results <- train %>%
+  transmute(truth = income) %>%
+  bind_cols(pred_train) %>%
+  rename(estimate = .pred_class)
+
+# confusion matrix (training)
+conf_mat(train_results, truth = truth, estimate = estimate)
+
+# accuracy (training)
+accuracy(train_results, truth = truth, estimate = estimate)
+```
+
+------------------------------------------------------------------------
+
+### Part d) (10 pts) — Logistic regression classifier {#task1d}
+
+Use logistic regression to model the **probability of being a high earner** (`income_ind = 1`). The binary response variable `income_ind` was created during data preparation.
+
+**Step 1:** Inspect the four exploratory plots below to assess which predictors are useful. The code is provided — run it as-is.
+
+```{r task1d_logit_plots}
+# base plot: estimated probability of high income vs age
+log_plot <- ggplot(data = census, aes(x = age, y = income_ind)) +
+  geom_jitter(alpha = 0.1, height = 0.05) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  ylab("P(income > $50K)")
+
+log_plot + xlab("Age (years)")
+
+log_plot + aes(x = education_1) +
+  xlab("Education level (1 = lowest, 16 = highest)")
+
+log_plot + aes(x = sex) +
+  xlab("Sex")
+
+log_plot + aes(x = marital_status) +
+  xlab("Marital status")
+```
+
+**Q:** Which variables appear to be important predictors of high income? Briefly explain what each plot tells you.
+
+*Your answer here (2–4 sentences):*
+
+\*Age and education level appear to be important predictors. The first 2 plots show a upward trend where the predicted probability of earning \>\$50K increases as age and especially education increase. The sex plot also shows males generally have higher earnings then females, and the marital status plot differs a lot by category, so also both important predictors.
+
+**Step 2:** Fit a logistic regression model using `glm()` with `family = "binomial"`. Use at minimum `age`, `education_1`, and `sex` as predictors. You may optionally include `marital_status` or other variables. Print a tidy coefficient table with `tidy()`.
+
+**Hint:** The response variable is `income_ind` (0/1), not the factor `income`.
+
+```{r task1d_logit_model}
+# YOUR CODE HERE
+# make sure income_ind is 0/1 (numeric) and sex is treated as a factor
+#train <- train %>%
+
+# logistic regression (minimum predictors: age, education_1, sex, marital status)
+log_fit <- glm(
+  income_ind ~ age + education_1 + sex + marital_status,
+  family = "binomial",
+  data = train
+)
+
+tidy(log_fit, conf.int = TRUE) %>%
+  mutate(odds_ratio = exp(estimate)) %>%
+  print()
+
+```
+
+**Step 3:** Generate predicted probabilities on the **training set**, apply a 0.5 cutoff to classify each observation, and report the confusion matrix and accuracy.
+
+```{r task1d_logit_train_eval}
+# YOUR CODE HERE
+# predicted probabitities on the training set
+train_pred_prob <- predict(log_fit, newdata = train, type = "response")
+
+# Classify using 0.5 cutoff
+train_pred_class <- ifelse(train_pred_prob >= 0.5, 1, 0)
+
+# confusion matrix (Actual x Predicted)
+cm <- table(
+  Actual = train$income_ind,
+  Predicted = train_pred_class
+)
+print(cm)
+
+# accuracy
+accuracy <- mean(train_pred_class == train$income_ind)
+print(accuracy)
+
+```
+
+------------------------------------------------------------------------
+
+### Part e) (10 pts) — Evaluate the logistic model on the test set {#task1e}
+
+Apply the trained logistic regression model to the held-out `test` set. Report the confusion matrix and test-set accuracy.
+
+**Note:** The test-set accuracy is the honest estimate of how well the model generalises to new data.
+
+```{r task1e_logit_test_eval}
+# YOUR CODE HERE
+# Predicted probabilities on the test set
+test_pred_prob <- predict(log_fit, newdata = test, type = "response")
+
+# Classify using 0.5 cutoff
+test_pred_class <- ifelse(test_pred_prob >= 0.5, 1, 0)
+
+# Confusion matrix (Actual x Predicted)
+cm_test <- table(
+  Actual = test$income_ind,
+  Predicted = test_pred_class
+)
+print(cm_test)
+
+# Test-set accuracy
+test_accuracy <- mean(test_pred_class == test$income_ind)
+print(test_accuracy)
+
+```
+
+------------------------------------------------------------------------
+
+### Part f) (10 pts) — Model comparison {#task1f}
+
+Which of the three classifiers (k-NN, Naive Bayes, logistic regression) achieved the highest **test-set** accuracy? Why is test-set accuracy a better comparison criterion than training-set accuracy?
+
+*Your answer here (3–5 sentences):*
+*Logistic regression had the highest test-set accuracy at 0.820043. Naive Bayes was 0.8128291 and k-NN was 0.7574982. Test set is a better comparison than training set because the test set is not used to fit or tune the model, so its accuracy estimates how well the classifier generalizes to new unseen data. It is also better because models can overfit with patterns or noise in the training data and look artifically good but preform worse on new data. 
+
+------------------------------------------------------------------------
+
+## Task 2 (Total 40 pts): Hierarchical clustering — vehicle fuel economy {#task2}
+
+*Complete this task **or** Task 3 — not both.*
+
+Hierarchical clustering groups observations based on their pairwise distances without requiring a pre-specified number of clusters. The result is a **dendrogram** — a tree where the height of each merge point indicates the dissimilarity between the joined groups.
+
+We apply hierarchical clustering to 2016 model-year vehicle fuel economy data from the US Department of Energy. The dataset includes `miles per gallon`, `engine displacement`, `number of cylinders`, and `number of gears`.
+
+**Setup:** Download the file `2016 FEGuide.xlsx` from the course portal and save it in a subfolder named `data/` inside your working directory.
+
+### Toyota example (provided — run as-is) {#task2-toyota}
+
+Study the code and output below carefully. You will adapt it for your chosen car maker in Part a).
+
+```{r task2_load_cars}
+filename <- "data/2016 FEGuide.xlsx"  # adjust path if stored elsewhere
+
+# load and clean the data
+cars <- read_excel(filename) %>%
+  janitor::clean_names() %>%
+  dplyr::select(
+    make         = mfr_name,
+    model        = carline,
+    displacement = eng_displ,
+    number_cyl,
+    number_gears,
+    city_mpg     = city_fe_guide_conventional_fuel,
+    hwy_mpg      = hwy_fe_guide_conventional_fuel
+  ) %>%
+  distinct(model, .keep_all = TRUE) %>%
+  filter(make == "Toyota")
+
+glimpse(cars)
+```
+
+As a large automaker, Toyota has a diverse lineup — cars, trucks, SUVs, and hybrid vehicles. Can unsupervised learning categorise these vehicles sensibly using only fuel economy and engine data?
+
+The variables are on different scales (`number_gears` ranges 1–8, `city_mpg` ranges 13–58). The `dist()` function treats each variable as equally important by computing raw Euclidean distances.
+
+```{r task2_car_distances}
+# pairwise Euclidean distances between all Toyota models
+car_diffs <- cars %>%
+  column_to_rownames(var = "model") %>%
+  dist()
+
+str(car_diffs)
+```
+
+```{r task2_distance_matrix}
+# view the first 6×6 corner of the full distance matrix
+car_mat <- car_diffs %>% as.matrix()
+car_mat[1:6, 1:6] %>% round(digits = 2)
+```
+
+```{r task2_toyota_dendrogram, warning=FALSE, fig.height=14, fig.width=8}
+car_diffs %>%
+  hclust() %>%
+  as.phylo() %>%
+  plot(
+    cex          = 0.9,
+    label.offset = 1,
+    main         = "Hierarchical clustering of 2016 Toyota models\nby fuel economy and engine characteristics",
+    font         = 1
+  )
+```
+
+------------------------------------------------------------------------
+
+### Part a) (20 pts) — Dendrogram for your chosen car maker {#task2a}
+
+Choose **one** car maker from the list below:
+
+`General Motors` \| `Nissan` \| `Ford Motor Company` \| `Honda` \| `Mercedes-Benz` \| `BMW` \| `Kia`
+
+Adapt the Toyota code above to load, filter, compute distances, and plot a dendrogram for your chosen maker. Change the `filter(make == "Toyota")` line to match your chosen maker's exact name as it appears in the `mfr_name` column of the Excel file.
+
+**Hint:** Use `unique(cars_all$make)` (after loading without the `filter()`) to check the exact spelling of maker names in the data.
+
+```{r task2a_chosen_maker}
+# load data for your chosen car maker — replace "Toyota" with your choice
+# e.g. filter(make == "Honda")
+
+# YOUR CODE HERE
+
+```
+
+------------------------------------------------------------------------
+
+### Part b) (20 pts) — Interpret the dendrogram {#task2b}
+
+Examine the dendrogram you produced in Part a). Write 3–5 sentences addressing:
+
+1.  What groups (clusters) do you observe? Name some of the models in each.
+2.  What do models within the same cluster have in common (consider MPG, engine size, number of cylinders)?
+3.  How do the major clusters differ from each other?
+
+*Your answer here:*
+
+------------------------------------------------------------------------
+
+## Task 3 (Total 40 pts): K-means clustering — geospatial world cities {#task3}
+
+*Complete this task **or** Task 2 — not both.*
+
+K-means assigns each observation to one of K groups by minimising within-cluster distances to centroids. Unlike hierarchical clustering, **K must be specified in advance** and no dendrogram is produced.
+
+**Geospatial example:** The `world_cities` dataset (from `mdsr`) contains the latitude and longitude of thousands of cities — but **no continent or country labels**. The question is: can k-means recover continent-level geographic structure from raw coordinates alone?
+
+### Provided example: Cartesian coordinates (run as-is) {#task3-cartesian}
+
+```{r task3_select_cities}
+# select the 4,000 most populous cities; keep only coordinates
+BigCities <- world_cities %>%
+  arrange(desc(population)) %>%
+  head(4000) %>%
+  dplyr::select(longitude, latitude)
+
+glimpse(BigCities)
+```
+
+Note that the data contain no city names, country labels, or continent information — only coordinates.
+
+```{r task3_kmeans_cartesian}
+set.seed(15)
+
+# assign cluster labels (k = 6)
+city_clusts <- BigCities %>%
+  kmeans(centers = 6) %>%
+  fitted("classes") %>%
+  as.character()
+
+# more stable run: try 10 random starts and keep the best solution
+km <- kmeans(BigCities, centers = 6, nstart = 10)
+
+# number of cities in each cluster
+km$size
+
+# mean longitude and latitude of each cluster centre
+km$centers
+
+# attach cluster labels for plotting
+BigCities <- BigCities %>%
+  mutate(cluster = city_clusts)
+
+# plot in standard Cartesian coordinates
+BigCities %>%
+  ggplot(aes(x = longitude, y = latitude)) +
+  geom_point(aes(color = cluster), alpha = 0.5) +
+  labs(
+    title = "K-means clusters — raw longitude/latitude (no projection)",
+    x     = "Longitude",
+    y     = "Latitude",
+    color = "Cluster"
+  )
+```
+
+------------------------------------------------------------------------
+
+### Part a) (10 pts) — Interpret the Cartesian clusters {#task3a}
+
+What geographic regions did the k-means algorithm identify from coordinates alone? Name each cluster's approximate real-world region based on the plot and the cluster centroids in `km$centers`.
+
+*Your answer here (3–5 sentences):*
+
+------------------------------------------------------------------------
+
+### Part b) (30 pts) — K-means under three coordinate projections {#task3b}
+
+The Earth is a three-dimensional spheroid. A **map projection** converts it to a flat two-dimensional representation. Because k-means uses Euclidean distance, the choice of projection can change which cities are considered "close" and therefore affect cluster boundaries.
+
+The three most common coordinate reference systems (CRS), identified by their EPSG codes, are:
+
+| EPSG code     | Name     | Used by                    |
+|---------------|----------|----------------------------|
+| **EPSG:4326** | WGS84    | GPS, Google Earth          |
+| **EPSG:3857** | Mercator | Google Maps, OpenStreetMap |
+| **EPSG:4269** | NAD83    | US federal agencies        |
+
+Apply k-means with K = 6 under **each of the three projections** below. For each one:
+
+1.  Run the k-means clustering on the projected coordinates.
+2.  Plot the clusters (code structure is provided — fill in the `labs()` title).
+3.  After all three plots, write a short comparison in Part b) Discussion.
+
+**Note:** Each correctly produced and labelled cluster plot is worth **10 pts**.
+
+**Hint:** The full workflow for EPSG:4326 is shown below. Adapt the EPSG code and axis labels for the remaining two projections.
+
+#### EPSG:4326 — WGS84 {#task3b-4326}
+
+```{r Spatial_Object1, message=FALSE, warning=FALSE}
+# copy BigCities to a working object (coordinates() modifies the object in place)
+d <- BigCities
+
+# convert data.frame to a SpatialPointsDataFrame using columns 1 (longitude) and 2 (latitude)
+coordinates(d) <- 1:2
+
+# declare the source CRS as WGS84
+proj4string(d) <- CRS("+init=epsg:4326")
+
+# define the target CRS (same as source for EPSG:4326)
+CRS.new <- CRS("+init=epsg:4326")
+
+# apply the coordinate transformation
+d.new <- spTransform(d, CRS.new)
+
+# print the full PROJ.4 string for your reference
+proj4string(d.new) %>% strwrap()
+
+# run k-means on the projected coordinates
+city_clusts <- as.data.frame(d.new) %>%
+  kmeans(centers = 6) %>%
+  fitted("classes") %>%
+  as.character()
+
+# attach cluster labels
+df.new <- as.data.frame(d.new) %>%
+  mutate(
+    cluster   = city_clusts,
+    longitude = coords.x1,
+    latitude  = coords.x2
+  )
+
+# plot — coords.x1 and coords.x2 are the projected coordinate columns
+df.new %>%
+  ggplot(aes(x = coords.x1, y = coords.x2)) +
+  geom_point(aes(color = cluster), alpha = 0.5) +
+  scale_color_brewer(palette = "Set3") +
+  labs(
+    title = "K-means clusters — WGS84 (EPSG:4326)",
+    x     = "Longitude",
+    y     = "Latitude",
+    color = "Cluster"
+  )
+```
+
+#### EPSG:3857 — Mercator projection {#task3b-3857}
+
+Adapt the EPSG:4326 code above for the **Mercator** projection. Change the EPSG code in both `CRS()` calls to `"+init=epsg:3857"` and update the plot axis labels (Mercator units are metres, not degrees).
+
+```{r Spatial_Object2, message=FALSE, warning=FALSE}
+# YOUR CODE HERE
+
+```
+
+#### EPSG:4269 — NAD83 {#task3b-4269}
+
+Adapt the code once more for the **NAD83** projection. Change both `CRS()` calls to `"+init=epsg:4269"`.
+
+```{r Spatial_object3, message=FALSE, warning=FALSE}
+# YOUR CODE HERE
+
+```
+
+#### Discussion {#task3b-discussion}
+
+Compare your four plots (raw Cartesian, WGS84, Mercator, NAD83). Write 4–6 sentences addressing:
+
+1.  Do the clusters correspond to recognisable continental regions in each projection?
+2.  Are there noticeable differences between the projections in how cities are grouped?
+3.  Which projection, if any, produces the most geographically interpretable clusters, and why might that be?
+
+*Your answer here:*
+
+------------------------------------------------------------------------
+
+*Good luck! Submit both your `.Rmd` source file and the knitted `.html` output.*
