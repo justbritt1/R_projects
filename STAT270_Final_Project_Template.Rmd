@@ -534,7 +534,13 @@ BigCities %>%
 What geographic regions did the k-means algorithm identify from coordinates alone? Name each cluster's approximate real-world region based on the plot and the cluster centroids in `km$centers`.
 
 *Your answer here (3–5 sentences):*
-
+The k-means plot is essentially separating cities into big continent/ region blobs based only on longitude and latitude. 
+Cluster 1 = Europe + western Russia + Mediterranean. 
+Cluster 2 = Africa + some Middle east.
+Cluster 3 = Southeast Asia + Indonesia + Australia.
+Cluster 4 = Asia
+Cluster 5 = North America.
+Cluster 6 = South America.
 ------------------------------------------------------------------------
 
 ### Part b) (30 pts) — K-means under three coordinate projections {#task3b}
@@ -614,6 +620,50 @@ Adapt the EPSG:4326 code above for the **Mercator** projection. Change the EPSG 
 ```{r Spatial_Object2, message=FALSE, warning=FALSE}
 # YOUR CODE HERE
 
+# copy BigCities to a working object (coordinates() modifies the object in place)
+d <- BigCities
+
+# convert data.frame to a SpatialPointsDataFrame using columns 1 (longitude) and 2 (latitude)
+coordinates(d) <- 1:2
+
+# declare the source CRS as WGS84 (lon/lat in degrees)
+proj4string(d) <- CRS("+init=epsg:4326")
+
+# target CRS: Web Mercator (metres)
+CRS.new <- CRS("+init=epsg:3857")
+
+# transform lon/lat -> Mercator metres
+d.new <- spTransform(d, CRS.new)
+
+# (optional) print CRS info
+proj4string(d.new) %>% strwrap()
+
+# k-means on projected coordinates
+city_clusts <- as.data.frame(d.new) %>%
+  kmeans(centers = 6, nstart = 10) %>%  # nstart optional but recommended
+  fitted("classes") %>%
+  as.character()
+
+# attach cluster labels for plotting
+df.new <- as.data.frame(d.new) %>%
+  mutate(
+    cluster = city_clusts,
+    x_m     = coords.x1,
+    y_m     = coords.x2
+  )
+
+# plot in Mercator metres
+df.new %>%
+  ggplot(aes(x = x_m, y = y_m)) +
+  geom_point(aes(color = cluster), alpha = 0.5) +
+  scale_color_brewer(palette = "Set3") +
+  labs(
+    title = "K-means clusters — Web Mercator (EPSG:3857)",
+    x     = "X (metres)",
+    y     = "Y (metres)",
+    color = "Cluster"
+  )
+
 ```
 
 #### EPSG:4269 — NAD83 {#task3b-4269}
@@ -622,6 +672,45 @@ Adapt the code once more for the **NAD83** projection. Change both `CRS()` calls
 
 ```{r Spatial_object3, message=FALSE, warning=FALSE}
 # YOUR CODE HERE
+# copy BigCities to a working object (coordinates() modifies the object in place)
+d <- BigCities
+
+# convert data.frame to a SpatialPointsDataFrame using columns 1 (longitude) and 2 (latitude)
+coordinates(d) <- 1:2
+
+# NAD83 geographic coordinates (degrees)
+proj4string(d) <- CRS("+init=epsg:4269")
+
+CRS.new <- CRS("+init=epsg:4269")
+
+# transform (this will effectively be identity if already NAD83)
+d.new <- spTransform(d, CRS.new)
+
+# k-means on NAD83 coordinates
+city_clusts <- as.data.frame(d.new) %>%
+  kmeans(centers = 6, nstart = 10) %>%
+  fitted("classes") %>%
+  as.character()
+
+# attach cluster labels for plotting
+df.new <- as.data.frame(d.new) %>%
+  mutate(
+    cluster   = city_clusts,
+    longitude = coords.x1,
+    latitude  = coords.x2
+  )
+
+# plot in NAD83 degrees
+df.new %>%
+  ggplot(aes(x = longitude, y = latitude)) +
+  geom_point(aes(color = cluster), alpha = 0.5) +
+  scale_color_brewer(palette = "Set3") +
+  labs(
+    title = "K-means clusters — NAD83 (EPSG:4269)",
+    x     = "Longitude (degrees)",
+    y     = "Latitude (degrees)",
+    color = "Cluster"
+  )
 
 ```
 
@@ -634,7 +723,7 @@ Compare your four plots (raw Cartesian, WGS84, Mercator, NAD83). Write 4–6 sen
 3.  Which projection, if any, produces the most geographically interpretable clusters, and why might that be?
 
 *Your answer here:*
-
+Across all four plots, the clusters largely line up with recognizable continental-scale regions, because long/lat alone strongly separates cities by where landmasses are. The raw Cartesian and WGS84 plots look similar, so the cluster groupings should be nearly identical and still easy to interpret as continents. The Mercator version can show some noticeable differences near high latitudes because Mercator stretches distances as you move toward the poles, which can change the spacing between northern cities and slightly affect which points k-means group together. NAD83 and WGS84 also look very similar at a global scale. Overall, the most geographically interpretable clusters are usually from a projection that makes Euclidean distances more meaningful. None are perfect but WGS84/ NAD83 look most interpretable here simply because they preserve the familiar world layout without extreme scale distortion in the plot. 
 ------------------------------------------------------------------------
 
 *Good luck! Submit both your `.Rmd` source file and the knitted `.html` output.*
